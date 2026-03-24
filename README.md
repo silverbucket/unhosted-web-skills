@@ -14,14 +14,14 @@ Agent skills for building [unhosted web applications](https://unhosted.org) -- b
 ### Via skills.sh CLI
 
 ```bash
-npx skills add silverbucket/unhosted-web-skills --skill sockethub
+npx skills add silverbucket/agent-skills --skill sockethub
 ```
 
 ### Via Claude Code
 
 ```
-/plugin marketplace add silverbucket/unhosted-web-skills
-/plugin install sockethub@unhosted-web-skills
+/plugin marketplace add silverbucket/agent-skills
+/plugin install sockethub@agent-skills
 ```
 
 ## License
