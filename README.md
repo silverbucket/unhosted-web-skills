@@ -7,6 +7,7 @@ Agent skills for building [unhosted web applications](https://unhosted.org) -- b
 | Skill | Description |
 |-------|-------------|
 | [sockethub](skills/sockethub) | Multi-protocol messaging gateway bridging web apps to IRC, XMPP, and RSS/Atom via ActivityStreams |
+| [remotestorage](skills/remotestorage) | Build offline-first, unhosted web apps with user-owned data storage, automatic sync, and zero backend infrastructure |
 
 ## Installation
 

@@ -17,6 +17,15 @@
       "skills": [
         "./skills/sockethub"
       ]
+    },
+    {
+      "name": "remotestorage",
+      "description": "Build offline-first, unhosted web apps with remoteStorage.js — user-owned data storage with automatic sync and zero backend infrastructure",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/remotestorage"
+      ]
     }
   ]
 }
