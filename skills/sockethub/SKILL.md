@@ -87,7 +87,7 @@ import { io } from 'socket.io-client';
 
 const socket = io('http://localhost:10550', { path: '/sockethub' });
 const sc = new SockethubClient(socket, { initTimeoutMs: 5000 });
-await sc.ready(); // loads schema registry -- must await before sending
+await sc.ready(); // loads schema registry; messages sent before ready() are queued up to configured limits
 
 // Listen for messages
 sc.socket.on('message', (msg) => console.log(msg));

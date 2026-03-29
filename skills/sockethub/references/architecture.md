@@ -43,7 +43,7 @@ Sockethub runs as multiple cooperating processes:
 ## Session Lifecycle
 
 1. **Connect**: Client establishes Socket.IO connection, server assigns unique session ID
-2. **Initialize**: Client calls `sc.ready()`, server sends schema registry
+2. **Initialize**: Client calls `await sc.ready()`, server sends schema registry
 3. **Authenticate**: Client sends credentials via `credentials` event, server encrypts
    and stores in Redis keyed by session ID + credential ID
 4. **Operate**: Client sends/receives ActivityStreams messages
