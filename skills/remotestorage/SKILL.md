@@ -61,7 +61,8 @@ const rs = new RemoteStorage({
 // 2. Claim access to a category (creates /myfavoritedrinks/ namespace)
 rs.access.claim('myfavoritedrinks', 'rw');
 
-// 3. Enable caching for offline use
+// 3. Enable caching for offline use + automatic sync
+//    Local writes sync automatically; periodic sync fetches remote changes
 rs.caching.enable('/myfavoritedrinks/');
 
 // 4. Attach the connect widget to your page
@@ -392,6 +393,32 @@ client.on('change', (event) => {
 });
 ```
 
+**Handling bulk incoming changes:**
+
+During a sync cycle, `change` fires once per incoming item. The recommended
+approach is to handle each event individually (add/update/remove one item in
+your UI state) as shown above.
+
+Avoid calling `getAll()` inside a `change` handler — it rereads the entire
+cache on every item. If your app must reload full collections, use `change`
+only as a flag and defer the reload to `sync-done`:
+
+```javascript
+let hasChanges = false;
+client.on('change', () => { hasChanges = true; });
+
+remoteStorage.on('sync-done', () => {
+  if (hasChanges) {
+    hasChanges = false;
+    reloadFromCache(); // single getAll() per cycle
+  }
+});
+```
+
+Note: `sync-done` fires every sync cycle (default: every 10s foreground, 60s
+background), even when nothing changed. Always gate reloads on actual change
+events.
+
 ## API Reference
 
 ### Constructor options
@@ -407,10 +434,15 @@ rs.connect(userAddress, token)   // Connect with pre-acquired token (Node.js)
 rs.disconnect()                  // Disconnect and clear cache
 rs.reconnect()                   // Re-authorize (e.g. after 401)
 rs.setApiKeys({ dropbox, googledrive })  // Enable third-party backends
-rs.startSync() / rs.stopSync()           // Control sync cycle
+rs.startSync()                           // Trigger manual check for remote changes
+rs.stopSync()                            // Pause the periodic sync cycle
 rs.setSyncInterval(10000)                // Foreground interval (ms)
 rs.setBackgroundSyncInterval(60000)      // Background interval (ms)
 ```
+
+> **Note:** Local writes (`storeObject`, `storeFile`, `remove`) are automatically
+> queued for sync. Do not call `startSync()` after writing — it is only needed to
+> manually request remote changes (e.g. on `visibilitychange` or a "sync now" button).
 
 ### BaseClient — data operations
 
