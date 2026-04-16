@@ -126,6 +126,12 @@ A server MAY return a JRD with an empty `links` array or omit `links` entirely
 when there are no links to return. An empty `subject`-only JRD is a valid
 response to a successful lookup with no advertised services.
 
+> **webfinger.js@3.0.3 caveat**: The library requires the parsed JRD to have a
+> `links` property of type `object` and rejects with `WebFingerError: unknown
+> response from server` otherwise. An RFC-valid subject-only JRD (no `links`
+> field at all) will therefore fail. Servers targeted by webfinger.js clients
+> should always emit `"links": []` rather than omitting the field.
+
 ---
 
 ## RFC 7565 — `acct:` URI
@@ -197,14 +203,16 @@ Example host-meta document (RFC 6415 §1.1):
 
 ### When `webfinger.js` uses it
 
-With `uri_fallback: true`, webfinger.js tries (in order, all over HTTPS first;
-HTTP retry only if `tls_only: false`):
+With `uri_fallback: true`, webfinger.js tries each of these paths in order:
 
 1. `/.well-known/webfinger?resource=acct:user@host`
 2. `/.well-known/host-meta?resource=acct:user@host`
 3. `/.well-known/host-meta.json?resource=acct:user@host`
 
-This catches deployments that have not migrated to RFC 7033 endpoints.
+The protocol used is `https://` for public hosts and `http://` for `localhost`
+(the localhost selection is unconditional; `tls_only` does not gate it). When
+`tls_only: false`, every URL above is retried over HTTP after the HTTPS attempt
+fails. This catches deployments that have not migrated to RFC 7033 endpoints.
 
 ### Security note
 

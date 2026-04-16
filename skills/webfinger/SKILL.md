@@ -94,9 +94,14 @@ async function resolveActor(handle) {
   const addr = handle.replace(/^@/, '');
   const { object: jrd } = await wf.lookup(addr);
 
-  const self = jrd.links?.find(
-    (l) => l.rel === 'self' && l.type === 'application/activity+json'
-  );
+  // ActivityPub servers may advertise either MIME type for the actor link.
+  const isAPType = (t) =>
+    t === 'application/activity+json' ||
+    (typeof t === 'string' &&
+      t.startsWith('application/ld+json') &&
+      t.includes('https://www.w3.org/ns/activitystreams'));
+
+  const self = jrd.links?.find((l) => l.rel === 'self' && isAPType(l.type));
   if (!self?.href) throw new Error(`No ActivityPub actor for ${addr}`);
 
   const actor = await fetch(self.href, {
@@ -223,7 +228,7 @@ All four options are independent; pass any subset.
 
 | Option                     | Default | Purpose                                                                                                    |
 |----------------------------|---------|------------------------------------------------------------------------------------------------------------|
-| `tls_only`                 | `true`  | Require HTTPS. When `false`, webfinger.js permits HTTP **only for `localhost`** — public hosts stay HTTPS. |
+| `tls_only`                 | `true`  | Require HTTPS for non-localhost hosts. **Localhost is always reached over HTTP**, regardless of this setting (webfinger.js@3.0.3 unconditionally selects `http://` for `localhost` / `localhost.localdomain`). When `false`, the library will also retry over HTTP for any host if the HTTPS request fails. |
 | `uri_fallback`             | `false` | If `/.well-known/webfinger` fails, also try `/.well-known/host-meta` and `/.well-known/host-meta.json`.    |
 | `request_timeout`          | `10000` | Per-request timeout in milliseconds.                                                                       |
 | `allow_private_addresses`  | `false` | Disable the SSRF blocklist. **Development only** — never set `true` in production.                         |
@@ -248,9 +253,17 @@ new WebFinger(cfg?: Partial<WebFingerConfig>)
 lookup(address: string): Promise<WebFingerResult>
 ```
 
-Accepts either a bare address (`user@domain`) or a full URI (`acct:user@domain`,
-`https://...`). Bare addresses are treated as `acct:` automatically. Resolves to
-a `WebFingerResult`; rejects with `WebFingerError`.
+Accepts a bare address (`user@domain`) or an `acct:` URI; bare addresses are
+treated as `acct:` automatically. Resolves to a `WebFingerResult`; rejects with
+`WebFingerError`.
+
+> **Caveat for non-`acct:` URIs**: webfinger.js@3.0.3 concatenates the address
+> into the query string verbatim (`'?resource=' + uri + address`) without
+> percent-encoding. Any `&`, `?`, `=`, or other reserved character in a passed
+> URI corrupts the request. For example, `lookup('https://example.com/p?x=1&y=2')`
+> emits `…?resource=https://example.com/p?x=1&y=2`, which the server parses as
+> `resource=https://example.com/p?x=1` plus a stray `y=2` parameter. Stick to
+> bare `user@domain` or `acct:user@domain` until the library escapes the value.
 
 ### `lookupLink(address, rel)`
 
@@ -338,8 +351,12 @@ property is normalized into `result.idx.properties`: the namespaced `name`
 webfinger.js is built around an "ActivityPub-grade" SSRF posture and ships safe
 defaults. Treat the defaults as the baseline; only relax them with intent.
 
-- **HTTPS is required.** `tls_only: true` is the default; redirects must also be
-  HTTPS. The library will not downgrade.
+- **HTTPS for public hosts.** `tls_only: true` is the default; redirects to
+  public hosts must also be HTTPS. The library will not downgrade an HTTPS
+  request to HTTP unless `tls_only: false` is set explicitly. Note: `localhost`
+  is a deliberate exception — it is always reached over HTTP, even with
+  `tls_only: true`. Pair this with `allow_private_addresses: true` for any
+  local-server testing.
 - **Private and internal addresses are blocked** by default — including DNS
   resolution. Blocked ranges:
   - Loopback: `127.0.0.0/8`, `::1`, `localhost`, `localhost.localdomain`
