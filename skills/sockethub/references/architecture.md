@@ -67,10 +67,11 @@ BullMQ manages the message queue in Redis:
 - Queue naming: `sockethub:{parentId}:data-layer:queue:{platformId}`
 - Each platform has its own dedicated queue
 - Jobs are encrypted before enqueuing
-- Failed jobs trigger `failed` events back to the client
-- Completed jobs trigger `completed` events
-- Clients should treat these events as the canonical job-lifecycle signal;
-  per-emit Socket.IO ack callbacks are not reliable across all job types.
+- BullMQ fires internal `completed` / `failed` events when a job finishes;
+  the server consumes them and delivers the result to the originating
+  client either by invoking the per-emit ack callback stored for that job
+  or, for broadcasts and peers, as a `message` Socket.IO event. The client
+  does **not** receive `completed` / `failed` as Socket.IO events directly.
 
 ## Platform Workers
 

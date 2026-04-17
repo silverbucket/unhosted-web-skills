@@ -140,16 +140,8 @@ sc.socket.emit('message', {
   actor: { id: 'mynick@irc.libera.chat', type: 'person' }
 });
 
-// Wait for join to complete before acting on channel state.
-// The 'completed' event is the canonical signal — per-emit ack
-// callbacks do not fire for join jobs.
-sc.socket.on('completed', (job) => {
-  if (job.type === 'join') {
-    // Channel is joined; safe to query attendance, render UI, etc.
-  }
-});
-
-// Join channel
+// Join channel. Pass an ack callback to learn the outcome;
+// treat any payload with an `error` property as a failure.
 sc.socket.emit('message', {
   '@context': [
     'https://www.w3.org/ns/activitystreams',
@@ -159,6 +151,12 @@ sc.socket.emit('message', {
   type: 'join',
   actor: { id: 'mynick@irc.libera.chat', type: 'person' },
   target: { id: '#sockethub@irc.libera.chat', type: 'room' }
+}, (result) => {
+  if (result?.error) {
+    console.error('Join failed:', result.error);
+    return;
+  }
+  // Channel is joined; safe to query attendance, render UI, etc.
 });
 ```
 
@@ -344,21 +342,33 @@ sc.ActivityStreams   // ActivityStreams helper library
 sc.clearCredentials()  // Remove stored credentials
 
 // Events
-sc.socket.on('message', handler)      // Incoming platform messages
-sc.socket.on('completed', handler)    // Canonical per-job completion signal
-sc.socket.on('failed', handler)       // Canonical per-job failure signal
-sc.socket.on('connect', handler)      // Socket.IO transport connected
-sc.socket.on('disconnect', handler)   // Socket.IO transport disconnected
-sc.socket.emit('message', activity)   // Send ActivityStreams message
-sc.socket.emit('credentials', creds)  // Set platform credentials
+sc.socket.on('message', handler)         // Incoming platform messages
+sc.socket.on('connect', handler)         // Socket.IO transport connected
+sc.socket.on('connect_error', handler)   // Socket.IO connection failed
+sc.socket.on('disconnect', handler)      // Socket.IO transport disconnected
+sc.socket.on('ready', handler)           // Schema registry loaded; client is ready
+sc.socket.on('init_error', handler)      // Client initialization failed
+sc.socket.on('client_error', handler)    // Client-side validation error
+sc.socket.emit('message', activity, cb)  // Send ActivityStreams message; cb(result) on response
+sc.socket.emit('credentials', creds, cb) // Set platform credentials; cb(result) on response
 ```
 
-**Job completion.** Listen on `sc.socket.on('completed', ...)` and
-`sc.socket.on('failed', ...)` for per-job lifecycle events. These are the
-canonical signals for job completion. Do **not** rely on Socket.IO per-emit
-ack callbacks (`socket.emit('message', job, cb)`) — they are not reliable
-for all job types (for example, IRC `join` fires `completed` but not the
-ack callback).
+**Responses and async events.** For client-initiated actions (`message`,
+`credentials`, etc.), pass an ack callback to `emit`:
+
+```javascript
+sc.socket.emit('message', activity, (result) => {
+  if (result?.error) { /* failed */ return; }
+  /* succeeded */
+});
+```
+
+Treat any callback payload containing an `error` property as failure.
+
+Not every inbound message is a direct response to your last request.
+Platforms also push messages asynchronously (e.g. incoming IRC `PRIVMSG`,
+XMPP presence updates) via the `message` event — handle them on
+`sc.socket.on('message', ...)`.
 
 ### IRC Credentials
 
