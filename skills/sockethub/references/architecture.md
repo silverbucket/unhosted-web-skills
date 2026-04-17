@@ -69,6 +69,8 @@ BullMQ manages the message queue in Redis:
 - Jobs are encrypted before enqueuing
 - Failed jobs trigger `failed` events back to the client
 - Completed jobs trigger `completed` events
+- Clients should treat these events as the canonical job-lifecycle signal;
+  per-emit Socket.IO ack callbacks are not reliable across all job types.
 
 ## Platform Workers
 

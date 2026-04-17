@@ -140,6 +140,15 @@ sc.socket.emit('message', {
   actor: { id: 'mynick@irc.libera.chat', type: 'person' }
 });
 
+// Wait for join to complete before acting on channel state.
+// The 'completed' event is the canonical signal — per-emit ack
+// callbacks do not fire for join jobs.
+sc.socket.on('completed', (job) => {
+  if (job.type === 'join') {
+    // Channel is joined; safe to query attendance, render UI, etc.
+  }
+});
+
 // Join channel
 sc.socket.emit('message', {
   '@context': [
@@ -336,13 +345,20 @@ sc.clearCredentials()  // Remove stored credentials
 
 // Events
 sc.socket.on('message', handler)      // Incoming platform messages
-sc.socket.on('completed', handler)    // Job completion acknowledgement
-sc.socket.on('failed', handler)       // Job failure notification
+sc.socket.on('completed', handler)    // Canonical per-job completion signal
+sc.socket.on('failed', handler)       // Canonical per-job failure signal
 sc.socket.on('connect', handler)      // Socket.IO transport connected
 sc.socket.on('disconnect', handler)   // Socket.IO transport disconnected
 sc.socket.emit('message', activity)   // Send ActivityStreams message
 sc.socket.emit('credentials', creds)  // Set platform credentials
 ```
+
+**Job completion.** Listen on `sc.socket.on('completed', ...)` and
+`sc.socket.on('failed', ...)` for per-job lifecycle events. These are the
+canonical signals for job completion. Do **not** rely on Socket.IO per-emit
+ack callbacks (`socket.emit('message', job, cb)`) — they are not reliable
+for all job types (for example, IRC `join` fires `completed` but not the
+ack callback).
 
 ### IRC Credentials
 
