@@ -26,6 +26,15 @@
       "skills": [
         "./skills/remotestorage"
       ]
+    },
+    {
+      "name": "webfinger",
+      "description": "Discover user services from email-like addresses using the WebFinger protocol (RFC 7033) — remoteStorage endpoints, ActivityPub actors, profile pages, avatars, and OpenID Connect issuers",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/webfinger"
+      ]
     }
   ]
 }
