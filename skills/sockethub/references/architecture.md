@@ -45,12 +45,12 @@ Sockethub runs as multiple cooperating processes:
 1. **Connect**: Client establishes Socket.IO connection, server assigns unique session ID
 2. **Initialize**: Client calls `await sc.ready()`, server sends schema registry
 3. **Authenticate**: Client sends credentials via `credentials` event, server encrypts
-   and stores in Redis keyed by session ID + credential ID
+   and stores in Redis keyed by session ID + actor ID
 4. **Operate**: Client sends/receives ActivityStreams messages
 5. **Disconnect**: Session cleanup, credentials removed from Redis, platform connections
    closed if no other sessions reference them
 
-## Credential Encryption
+## Credential Security
 
 All credentials are encrypted using `@sockethub/crypto`:
 
@@ -59,6 +59,10 @@ All credentials are encrypted using `@sockethub/crypto`:
 - Platform workers decrypt credentials when processing jobs
 - Keys are never stored persistently -- lost on server restart
 - Redis key pattern: `sockethub:{parentId}:data-layer:credentials-store:{sessionId}:{credentialId}`
+
+Credentials sent via the `credentials` event are never echoed back to the client
+or logged in plain text. The encryption is per-session, so even if Redis is
+compromised, credentials cannot be decrypted without the in-memory session key.
 
 ## Job Queue
 
@@ -91,14 +95,30 @@ BullMQ manages the message queue in Redis:
 - Maintain long-lived protocol connections
 - `isInitialized()` returns `true` only when connected
 - Track connection state per actor
-- Auto-reconnect on temporary failures
 - Connections shared across sessions using the same actor credentials
+- Reconnect behavior differs per platform:
+  - **XMPP**: auto-reconnects on recoverable network errors (see below)
+  - **IRC**: force-disconnects on error/close/timeout — the client must
+    re-issue a connect action to restore the session
 
 **Stateless platforms** (Feeds, Metadata):
 - No persistent connections
 - `isInitialized()` always returns `true`
 - Each job is independent
 - No connection management needed
+
+### Error Classification (XMPP)
+
+XMPP classifies connection errors to decide whether automatic reconnection
+is appropriate:
+
+- **Recoverable** (auto-reconnect): `ECONNRESET`, `ECONNREFUSED`, `ETIMEDOUT`,
+  `ENOTFOUND`, `EHOSTUNREACH`, `ENETUNREACH`
+- **Non-recoverable** (manual reconnect required): authentication failures,
+  protocol errors, policy violations, any unrecognized error
+
+Non-recoverable errors stop the client and mark it uninitialized. The user
+must send new credentials and reconnect.
 
 ## Rate Limiting
 

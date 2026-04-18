@@ -8,13 +8,16 @@ object schemas. The registry is provided by `@sockethub/schemas`.
 
 ## @context Structure
 
-Every ActivityStreams message uses a three-element `@context` array:
+Every ActivityStreams message uses a three-element `@context` array. Use
+`sc.contextFor(platform)` to build it automatically from server metadata:
 
 ```javascript
-'@context': [
+sc.contextFor('irc')
+// Returns:
+[
   'https://www.w3.org/ns/activitystreams',                              // 1. AS2 base
   'https://sockethub.org/ns/context/v1.jsonld',                         // 2. Sockethub base
-  'https://sockethub.org/ns/context/platform/{platformId}/v1.jsonld'    // 3. Platform-specific
+  'https://sockethub.org/ns/context/platform/irc/v1.jsonld'             // 3. Platform-specific
 ]
 ```
 
@@ -23,7 +26,9 @@ Every ActivityStreams message uses a three-element `@context` array:
 - `SOCKETHUB_BASE_CONTEXT_URL`: `https://sockethub.org/ns/context/v1.jsonld`
 - `PLATFORM_CONTEXT_PREFIX`: `https://sockethub.org/ns/context/platform/`
 
-The client's `contextFor(platform)` method builds this array automatically.
+The `contextFor()` method is preferred over manually constructing the array because
+it derives context URLs from the server's schema registry, staying correct across
+versions.
 
 ## Valid Object Types
 
@@ -42,8 +47,8 @@ Server responses may also include AS2 core types like `collection` and `create`
 | `address` | Identity/nick change | Nick changes, identity updates |
 
 Using an invalid type (e.g., `'Note'`) causes validation failure -- the server
-emits a `failed` event back to the client, but the error message may not clearly
-indicate that the object type was the problem.
+returns the error via the ack callback (if one was provided), but the error
+message may not clearly indicate that the object type was the problem.
 
 ## Exported Schemas
 
@@ -80,7 +85,7 @@ InternalObjectTypesList           // Internal-only types
 4. Server validates object type against platform's allowed types
 5. Server validates action type (e.g., `send`, `join`) against platform's supported actions
 6. If validation passes, message is encrypted and enqueued
-7. If validation fails, a `failed` event is emitted back to the client
+7. If validation fails, the error is returned via the ack callback
 
 ## Credential Validation
 
@@ -88,14 +93,53 @@ Credentials follow a platform-specific schema but share common structure:
 
 ```javascript
 {
-  '@context': [...],           // Required: platform context
-  type: 'credentials',        // Required: must be 'credentials'
-  actor: { id: 'user@host' }, // Required: who the credentials belong to
+  '@context': sc.contextFor('irc'),   // Required: platform context
+  type: 'credentials',               // Required: must be 'credentials'
+  actor: { id: 'user@host' },        // Required: who the credentials belong to
   object: {
-    type: 'credentials',      // Required: must be 'credentials'
+    type: 'credentials',             // Required: must be 'credentials'
     // ... platform-specific fields (see platforms.md)
   }
 }
 ```
 
 Credentials are sent via the dedicated `credentials` event, not the `message` event.
+The server encrypts credentials before storing them in Redis, keyed by session ID
+and actor ID. Credentials never leave the server in plain text.
+
+### IRC Credential Validation
+
+The IRC credential schema enforces mutual exclusivity between `password` and
+`token` via a JSON Schema `not` constraint. Additional `allOf`/`anyOf` rules
+ensure that:
+
+- When `saslMechanism` is `'PLAIN'`, either `password` or `token` is present
+- When `saslMechanism` is `'OAUTHBEARER'`, `token` is present
+
+### XMPP Credential Validation
+
+XMPP requires `userAddress`, `password`, and `resource`. The `password` field
+is passed directly to `xmpp.js` for SASL negotiation. Some deployments accept
+a token string in the password slot as a compatibility mode, but this is
+server-dependent — dedicated token SASL mechanisms are not implemented.
+
+## Acknowledgement Callbacks
+
+Message sends support an optional acknowledgement callback as the third argument
+to `emit()`. The callback receives an ack object:
+
+```javascript
+sc.socket.emit('message', activity, (ack) => {
+  if (ack?.error) {
+    console.error('Server rejected message:', ack.error);
+  } else {
+    console.log('Message accepted:', ack);
+  }
+});
+```
+
+The ack callback fires once the platform worker finishes processing the job
+(e.g., after the IRC server confirms delivery). BullMQ `completed`/`failed`
+events are consumed internally by the server — they are not forwarded to
+the client as separate Socket.IO events. Asynchronous platform messages
+(incoming chat, presence updates) arrive on the `message` event.
