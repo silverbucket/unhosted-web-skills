@@ -1,0 +1,177 @@
+{
+  "skill_name": "sockethub",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I want to build a simple IRC chat client in the browser that connects to Libera.Chat. I have a NickServ personal access token. Show me the full client code to connect, join #sockethub, send a greeting, and display incoming messages.",
+      "expected_output": "Uses token (not password) in IRC credentials, uses process.env or similar for the token value (never hardcoded), follows credentials -> connect -> join flow in correct order, uses contextFor('irc'), uses ack callbacks to handle errors, listens for incoming messages on the 'message' event.",
+      "assertions": [
+        {
+          "name": "uses_token_field",
+          "description": "IRC credentials use the `token` field, not `password`",
+          "type": "contains",
+          "value": "token"
+        },
+        {
+          "name": "no_hardcoded_secrets",
+          "description": "No hardcoded credential strings in the output (no literal password/token values)",
+          "type": "not_contains",
+          "value": "'secret'"
+        },
+        {
+          "name": "correct_flow_order",
+          "description": "Follows credentials -> connect -> join ordering",
+          "type": "custom",
+          "check": "credentials emit appears before connect emit, which appears before join emit"
+        },
+        {
+          "name": "uses_context_for",
+          "description": "Uses sc.contextFor('irc') instead of manually constructing @context array",
+          "type": "contains",
+          "value": "contextFor"
+        },
+        {
+          "name": "handles_errors",
+          "description": "Includes error handling via ack callbacks or event listeners",
+          "type": "contains",
+          "value": "error"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Add XMPP messaging support to my web app. I need to connect to my Prosody server at chat.example.org using an OAuth token, join a MUC room called 'team@conference.chat.example.org', and send/receive messages. Give me the complete implementation.",
+      "expected_output": "Passes the OAuth token via the `password` field (XMPP has no separate token field), explains this is correct behavior, includes resource field, follows credentials -> connect -> join -> send flow, uses contextFor('xmpp'), handles groupchat target type correctly.",
+      "assertions": [
+        {
+          "name": "token_via_password_field",
+          "description": "XMPP token is passed via the `password` field since XMPP has no separate token field",
+          "type": "contains",
+          "value": "password"
+        },
+        {
+          "name": "includes_resource",
+          "description": "XMPP credentials include the required `resource` field",
+          "type": "contains",
+          "value": "resource"
+        },
+        {
+          "name": "includes_user_address",
+          "description": "XMPP credentials include the required `userAddress` field",
+          "type": "contains",
+          "value": "userAddress"
+        },
+        {
+          "name": "correct_muc_join",
+          "description": "Join message targets a room type for MUC",
+          "type": "contains",
+          "value": "room"
+        },
+        {
+          "name": "uses_context_for",
+          "description": "Uses sc.contextFor('xmpp') instead of manual @context",
+          "type": "contains",
+          "value": "contextFor"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "I need to build an RSS reader that fetches multiple feeds and also generates link previews for shared URLs. Using Sockethub, show me how to fetch an RSS feed from https://blog.example.com/feed.xml and get Open Graph metadata for https://example.com/article. Handle the responses properly.",
+      "expected_output": "Uses feeds and metadata platforms correctly as stateless (no credentials or connect step), uses contextFor('feeds') and contextFor('metadata'), properly handles the Collection response format for feeds, handles the OG metadata response, does NOT attempt to set credentials or connect for these platforms.",
+      "assertions": [
+        {
+          "name": "no_credentials_for_stateless",
+          "description": "Does not emit credentials for feeds or metadata platforms",
+          "type": "custom",
+          "check": "No credentials emit for feeds or metadata platforms"
+        },
+        {
+          "name": "no_connect_for_stateless",
+          "description": "Does not emit a connect message for feeds or metadata platforms",
+          "type": "custom",
+          "check": "No connect type message for feeds or metadata platforms"
+        },
+        {
+          "name": "handles_collection_response",
+          "description": "Properly handles the Collection response with items array from feed fetch",
+          "type": "contains",
+          "value": "items"
+        },
+        {
+          "name": "uses_both_platforms",
+          "description": "Uses both feeds and metadata platforms",
+          "type": "custom",
+          "check": "Code references both contextFor('feeds') and contextFor('metadata')"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "I'm connecting to chat.sr.ht which uses OAuth 2.0 for IRC authentication. I have an OAuth access token. Show me how to set up the Sockethub credentials and connect. Make sure to use the right SASL mechanism.",
+      "expected_output": "Uses token field (not password), sets saslMechanism to 'OAUTHBEARER' explicitly, uses secure connection on port 6697, follows correct credentials -> connect flow.",
+      "assertions": [
+        {
+          "name": "uses_oauthbearer",
+          "description": "Sets saslMechanism to 'OAUTHBEARER' for OAuth 2.0 tokens",
+          "type": "contains",
+          "value": "OAUTHBEARER"
+        },
+        {
+          "name": "uses_token_not_password",
+          "description": "Uses the `token` field, not `password`",
+          "type": "contains",
+          "value": "token"
+        },
+        {
+          "name": "secure_connection",
+          "description": "Uses secure: true for TLS connection",
+          "type": "contains",
+          "value": "secure"
+        },
+        {
+          "name": "no_hardcoded_token",
+          "description": "Token value is not hardcoded",
+          "type": "not_contains",
+          "value": "'oauth-access-token'"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "I'm building a multi-protocol chat app. I need to handle reconnection and errors properly. What events should I listen for, and how should I structure the error handling for both IRC and XMPP connections?",
+      "expected_output": "Covers ready/init_error events for initialization, connect_error for transport failures, ack callbacks with error property for per-message failures, explains XMPP recoverable vs non-recoverable error distinction, mentions that non-recoverable XMPP errors require manual reconnect with new credentials.",
+      "assertions": [
+        {
+          "name": "covers_ready_event",
+          "description": "Mentions the 'ready' event for initialization",
+          "type": "contains",
+          "value": "ready"
+        },
+        {
+          "name": "covers_init_error",
+          "description": "Mentions the 'init_error' event",
+          "type": "contains",
+          "value": "init_error"
+        },
+        {
+          "name": "covers_ack_errors",
+          "description": "Explains ack callback error handling pattern",
+          "type": "contains",
+          "value": "error"
+        },
+        {
+          "name": "xmpp_error_classification",
+          "description": "Distinguishes between recoverable and non-recoverable XMPP errors",
+          "type": "custom",
+          "check": "Mentions recoverable vs non-recoverable errors or auto-reconnect distinction for XMPP"
+        }
+      ],
+      "files": []
+    }
+  ]
+}
