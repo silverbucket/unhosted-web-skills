@@ -72,13 +72,6 @@ getPlatformId(context)            // Extract platform ID from @context
 resolvePlatform(id)               // Resolve platform module
 registerPlatform(id, schema)      // Register a platform schema
 
-// Context utilities
-addPlatformContext(platform)      // Add platform context to registry
-addPlatformSchema(id, schema)     // Register a platform schema
-validateActivityStream(activity)  // Validate full ActivityStreams message
-validateCredentials(creds)        // Validate credentials message
-buildCanonicalContext(contextUrl) // Build canonical @context array
-
 // Type lists
 ObjectTypesList                   // Public object types
 InternalObjectTypesList           // Internal-only types

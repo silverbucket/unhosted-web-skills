@@ -126,7 +126,6 @@ sc.socket.emit('credentials', {
 | `send` | Send a message to a channel or user | Yes (room or person) |
 | `update` | Update nick or topic | Depends on update type |
 | `query` | Query channel or user information | Yes |
-| `announce` | Send an announcement | Yes |
 | `disconnect` | Disconnect from IRC server | No |
 
 ### IRC-Specific Behavior
@@ -139,8 +138,9 @@ sc.socket.emit('credentials', {
 - User join/leave events emit corresponding `join`/`leave` messages
 - Presence changes (away, back) emit messages with `object.type: 'presence'`
 - Channel user lists come as `attendance` type objects
-- Messages starting with `/me` are sent as `object.type: 'me'` (IRC action)
-- Messages starting with `/NOTICE` are sent as IRC NOTICE commands
+- Credentials with a non-empty `password` or `token` are shareable across
+  sockets targeting the same actor. Username-only anonymous credentials are
+  not shareable and may return `username already in use`.
 
 ### Example: Send a channel message
 

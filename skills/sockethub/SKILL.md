@@ -1,8 +1,10 @@
 ---
 name: sockethub
-description: Bridges web applications to messaging protocols (IRC, XMPP, RSS/Atom) via
-  ActivityStreams. Use when building chat clients, connecting to IRC channels, sending
-  XMPP messages, fetching RSS feeds, or creating protocol-agnostic messaging applications.
+description: Use when building with Sockethub, ActivityStreams messaging,
+  browser-to-IRC/XMPP gateways, RSS/Atom fetching, metadata previews, or
+  multi-protocol chat clients. Also use whenever the user mentions Sockethub
+  directly, wants browser JavaScript to talk to IRC or XMPP, or needs
+  protocol-specific auth hidden behind one consistent message format.
 license: LGPL-3.0
 metadata:
   author: sockethub
@@ -10,9 +12,27 @@ metadata:
 
 # Sockethub
 
-A polyglot messaging gateway that translates ActivityStreams messages to
-protocol-specific formats, enabling browser JavaScript to communicate with IRC,
-XMPP, and feed services through a unified API.
+A protocol gateway for the web. It lets browser or server-side JavaScript
+talk to IRC, XMPP, feeds, and metadata endpoints through one
+ActivityStreams-based API.
+
+## Core Guidance
+
+- Prefer `sc.contextFor(platform)` over hand-writing context arrays unless the
+  user explicitly needs the raw URLs.
+- Prefer `await sc.ready()` before sending anything. The client queues messages
+  before readiness, but ready-first is easier to reason about.
+- Treat credentials as runtime secrets. Never hardcode, commit, paste into
+  logs, or echo back real passwords or tokens. Use placeholders or
+  environment-backed variables in examples (e.g. `process.env.IRC_TOKEN`).
+- Prefer tokens over passwords when the platform supports them. IRC has an
+  explicit `token` field. XMPP does not -- it accepts a `password` field, and
+  some deployments allow a token string in that field as a compatibility mode.
+- Always show the ack callback form of `socket.emit()` when wiring connect or
+  credentials flows. Sockethub returns callback payloads containing `error`
+  for rejected actions.
+- Call `sc.clearCredentials()` when switching users or performing explicit
+  logout so the client does not replay stale credentials on reconnect.
 
 ## When to Use
 
@@ -25,6 +45,8 @@ Invoke when you need to:
 - Create protocol-agnostic messaging applications
 - Handle real-time bidirectional communication with legacy protocols
 - Generate metadata previews for shared URLs
+- Explain Sockethub credential flows, connection lifecycle, or ActivityStreams
+  message shapes
 
 ## Architecture
 
@@ -51,13 +73,23 @@ See `references/architecture.md` for detailed internals.
 
 ### Server Setup
 
-```bash
-# Install globally
-bun add -g sockethub@alpha
+For packaged usage:
 
-# Start server (requires Redis)
-sockethub --port 10550
+```bash
+npm install -g sockethub
+sockethub --examples
 ```
+
+For current `master` or local development:
+
+```bash
+git clone https://github.com/sockethub/sockethub.git
+cd sockethub
+bun install
+bun run dev
+```
+
+Sockethub listens on `http://localhost:10550` by default and requires Redis.
 
 Or use Docker Compose:
 
@@ -167,96 +199,26 @@ Both IRC and XMPP support token-based authentication, which is the preferred
 approach. Tokens avoid transmitting reusable passwords and can be scoped or
 revoked independently.
 
-### IRC Authentication
+### IRC
 
-IRC supports three authentication methods. `password` and `token` are mutually
+IRC supports three auth methods. `password` and `token` are mutually
 exclusive -- providing both causes a schema validation error.
 
-**Token via SASL PLAIN** (preferred -- e.g. Libera.Chat NickServ personal access tokens):
+- **Token via SASL PLAIN** (preferred): set `token` to a personal access token
+  (e.g. Libera.Chat NickServ). SASL PLAIN is used automatically.
+- **Token via SASL OAUTHBEARER**: set `token` and `saslMechanism: 'OAUTHBEARER'`
+  for OAuth 2.0 bearer tokens (RFC 7628), e.g. chat.sr.ht.
+- **Password via SASL PLAIN** (legacy): set `password` and `sasl: true`.
 
-```javascript
-sc.socket.emit('credentials', {
-  '@context': sc.contextFor('irc'),
-  type: 'credentials',
-  actor: { id: 'mynick@irc.libera.chat' },
-  object: {
-    type: 'credentials',
-    nick: 'mynick',
-    server: 'irc.libera.chat',
-    token: process.env.IRC_TOKEN,
-    port: 6697,
-    secure: true
-  }
-});
-```
-
-When a `token` is provided without an explicit `saslMechanism`, SASL PLAIN is
-used automatically.
-
-**Token via SASL OAUTHBEARER** (OAuth 2.0 -- e.g. chat.sr.ht):
-
-```javascript
-sc.socket.emit('credentials', {
-  '@context': sc.contextFor('irc'),
-  type: 'credentials',
-  actor: { id: 'mynick@chat.sr.ht' },
-  object: {
-    type: 'credentials',
-    nick: 'mynick',
-    server: 'chat.sr.ht',
-    token: process.env.IRC_OAUTH_TOKEN,
-    saslMechanism: 'OAUTHBEARER',
-    port: 6697,
-    secure: true
-  }
-});
-```
-
-Set `saslMechanism` to `'OAUTHBEARER'` explicitly for OAuth 2.0 bearer tokens
-(RFC 7628). The schema requires `token` when this mechanism is selected.
-
-**Password via SASL PLAIN** (legacy):
-
-```javascript
-sc.socket.emit('credentials', {
-  '@context': sc.contextFor('irc'),
-  type: 'credentials',
-  actor: { id: 'mynick@irc.libera.chat' },
-  object: {
-    type: 'credentials',
-    nick: 'mynick',
-    server: 'irc.libera.chat',
-    password: process.env.IRC_PASSWORD,
-    port: 6697,
-    secure: true,
-    sasl: true
-  }
-});
-```
-
-### XMPP Authentication
+### XMPP
 
 XMPP uses a single `password` field for all authentication. For deployments
-that accept bearer-style tokens in the SASL PLAIN password slot (common with
-many XMPP servers), pass the token string as `password`. Dedicated token
-SASL mechanisms (ejabberd X-OAUTH2, Prosody OAUTHBEARER, Prosody X-TOKEN,
-SASL2 FAST) are not implemented by this client.
+that accept bearer-style tokens in the SASL PLAIN password slot, pass the
+token string as `password`. Dedicated token SASL mechanisms (ejabberd X-OAUTH2,
+Prosody OAUTHBEARER, Prosody X-TOKEN, SASL2 FAST) are not implemented.
 
-```javascript
-sc.socket.emit('credentials', {
-  '@context': sc.contextFor('xmpp'),
-  type: 'credentials',
-  actor: { id: 'user@jabber.org' },
-  object: {
-    type: 'credentials',
-    userAddress: 'user@jabber.org',
-    password: process.env.XMPP_TOKEN,  // token or password
-    resource: 'web'
-  }
-});
-```
-
-See `references/platforms.md` for full credential schemas and per-platform details.
+See `references/platforms.md` for full credential schemas, validation rules,
+and per-platform code examples.
 
 ## Examples
 
@@ -406,7 +368,7 @@ Environment: PORT, HOST, REDIS_URL, LOG_LEVEL,
 
 | Platform | Type | Actions | Description |
 |----------|------|---------|-------------|
-| IRC (`irc`) | Persistent | connect, join, leave, send, update, query, announce, disconnect | Internet Relay Chat |
+| IRC (`irc`) | Persistent | connect, join, leave, send, update, query, disconnect | Internet Relay Chat |
 | XMPP (`xmpp`) | Persistent | connect, join, leave, send, update, request-friend, make-friend, remove-friend, query, disconnect | Extensible Messaging and Presence |
 | Feeds (`feeds`) | Stateless | fetch | RSS 2.0, Atom 1.0, RSS 1.0/RDF |
 | Metadata (`metadata`) | Stateless | fetch | Open Graph and page metadata extraction |
@@ -482,6 +444,27 @@ sc.socket.emit('credentials', creds, cb) // Set platform credentials; cb(result)
 Treat any ack callback payload containing an `error` property as failure.
 Not every inbound `message` is a response to your last request — platforms
 also push asynchronously (e.g. incoming IRC `PRIVMSG`, XMPP presence).
+
+## Session Sharing
+
+Persistent platforms can attach multiple sockets to one running platform
+instance when they target the same actor and the credentials pass share
+validation. Share is allowed only when credentials include a non-empty
+`password` or `token`. Username-only anonymous credentials are not shareable
+and may return `username already in use`.
+
+## What to Avoid
+
+- Do not present Sockethub as a direct browser-to-IRC/XMPP library. It is a
+  server-side protocol gateway with a Socket.IO client API.
+- Do not recommend committing credentials to config files or source code.
+- Do not imply XMPP supports a first-class `token` field. Upstream does not.
+- Do not lead with raw context URLs when `sc.contextFor(...)` is enough.
+- Do not omit Redis when explaining server startup.
+- Do not ignore callback or `failed`-event error paths.
+- If the user pastes a real secret, redact it in any echoed examples or
+  summaries.
+
 ## Requirements
 
 - Bun >= 1.2.4 (or Node.js 18+)

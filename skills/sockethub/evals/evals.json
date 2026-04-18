@@ -172,6 +172,44 @@
         }
       ],
       "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Write me a quick Sockethub example that connects to IRC and sends a message. What credentials do you need from me?",
+      "expected_output": "Gives a secret-safe example with placeholders or environment variables and avoids asking the user to paste a private password or token into chat. Does not hardcode any credential values. Uses contextFor and ack callbacks.",
+      "assertions": [
+        {
+          "name": "uses_env_vars_or_placeholders",
+          "description": "Credential values use process.env or placeholder variables, never literal strings",
+          "type": "contains",
+          "value": "process.env"
+        },
+        {
+          "name": "no_hardcoded_password",
+          "description": "Does not include a literal password string like 'secret' or 'mypassword'",
+          "type": "not_contains",
+          "value": "'secret'"
+        },
+        {
+          "name": "no_hardcoded_token",
+          "description": "Does not include a literal token string",
+          "type": "not_contains",
+          "value": "'my-token'"
+        },
+        {
+          "name": "does_not_ask_for_secret",
+          "description": "Does not ask the user to paste their password or token into chat",
+          "type": "custom",
+          "check": "Response does not ask user to share their actual password or token value in the conversation"
+        },
+        {
+          "name": "uses_context_for",
+          "description": "Uses sc.contextFor() instead of manual @context",
+          "type": "contains",
+          "value": "contextFor"
+        }
+      ],
+      "files": []
     }
   ]
 }
