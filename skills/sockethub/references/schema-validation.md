@@ -32,19 +32,23 @@ versions.
 
 ## Valid Object Types
 
-Outbound messages (client to platform) must use one of these object types.
-Server responses may also include AS2 core types like `collection` and `create`
-(e.g., feed fetch results).
+There is no global object vocabulary: each platform's `messages` schema
+enumerates the `object` shapes it accepts from clients.
 
-| Type | Description | Usage |
-|------|-------------|-------|
-| `message` | Chat message or content | Sending/receiving text messages |
-| `me` | Action message (IRC /me) | Emoting or action descriptions |
-| `credentials` | Authentication data | Setting platform credentials |
-| `attendance` | User list for a room | Channel/room user listings |
-| `presence` | Online/away status | Presence updates |
-| `topic` | Room topic/subject | Channel topic changes |
-| `address` | Identity/nick change | Nick changes, identity updates |
+| Platform | Accepted `object.type` values (client to platform) |
+|----------|---------------------------------------------------|
+| `irc` | `message`, `topic`, `address`, `attendance`, `channels` (`/me` and `/notice` are `message` content prefixes; `me` is only emitted inbound) |
+| `xmpp` | `message`, `presence`, `attendance`, `room-info` |
+| `feeds` | No `type`; `object` is optional `{ since, limit }` |
+| `metadata` | No `object` accepted |
+
+Credentials use `object.type: 'credentials'` on the `credentials` event, not
+`message`. Platform responses use their own shapes (e.g. feeds `collection`
+with `post` items, metadata `page`).
+
+`ObjectTypesList` in `@sockethub/schemas` is the actor/target vocabulary
+(`feed`, `person`, `room`, `service`, `platform`, `website`, `address`,
+`calendar`, `addressBook`), not the message object vocabulary.
 
 Using an invalid type (e.g., `'Note'`) causes validation failure -- the server
 returns the error via the ack callback (if one was provided), but the error
@@ -52,29 +56,45 @@ message may not clearly indicate that the object type was the problem.
 
 ## Exported Schemas
 
-`@sockethub/schemas` exports:
+`@sockethub/schemas` (AJV-based) exports:
 
 ```typescript
-// Schema objects
-PlatformSchema          // Platform configuration structure
-ActivityObjectSchema    // Individual activity objects
-ActivityStreamSchema    // Full ActivityStreams messages
-SockethubConfigSchema   // Server configuration
+// Context constants and helpers
+AS2_BASE_CONTEXT_URL, SOCKETHUB_BASE_CONTEXT_URL, PLATFORM_CONTEXT_PREFIX
+buildCanonicalContext(platformIdOrUrl)      // -> three-element @context array
+platformIdFromContext(context)              // platform id from a @context array, or undefined
+resolvePlatformId(msg)                      // platform id from an activity, or null
 
-// Validation functions
-validateSchema(schema, data)      // Validate data against a schema
-validateCredentials(creds)        // Validate credential objects
-validateActivity(activity)        // Validate ActivityStreams messages
-validateObject(obj)               // Validate activity objects
+// Platform schema registry
+addPlatformSchema(schema, platformId)
+addPlatformContext(platformId, contextUrl)
+getPlatformSchema(platformId)               // compiled AJV validator, or undefined
 
-// Platform utilities
-getPlatformId(context)            // Extract platform ID from @context
-resolvePlatform(id)               // Resolve platform module
-registerPlatform(id, schema)      // Register a platform schema
+// Validators: all return an error string, or "" when valid
+validatePlatformSchema(schema)
+validateCredentials(activity)
+validateActivityStream(activity)
+validateActivityStreamResponse(activity)    // "" when the platform has no responses schema
+validateServiceDescriptor(descriptor)
+validateSockethubConfig(config)
+setValidationErrorOptions(options)          // tune AJV error text
 
-// Type lists
-ObjectTypesList                   // Public object types
-InternalObjectTypesList           // Internal-only types
+// Normalization
+normalizeActivityStream(activity)           // expand string actor/target refs
+
+// Schema objects and type lists
+PlatformSchema, ServiceDescriptorSchema, ActivityStreamSchema, SockethubConfigSchema
+ObjectTypesList, ObjectTypesSchema          // actor/target object vocabulary
+InternalObjectTypesList
+```
+
+Example:
+
+```javascript
+import { validateActivityStream } from '@sockethub/schemas';
+
+const err = validateActivityStream(activity);
+if (err) throw new Error(err);   // "" means valid
 ```
 
 ## Message Validation Flow
@@ -104,8 +124,9 @@ Credentials follow a platform-specific schema but share common structure:
 ```
 
 Credentials are sent via the dedicated `credentials` event, not the `message` event.
-The server encrypts credentials before storing them in Redis, keyed by session ID
-and actor ID. Credentials never leave the server in plain text.
+The server encrypts credentials before storing them in Redis, keyed by session ID,
+platform, and actor ID. They are not logged or broadcast to other sockets; the
+`credentials` ack callback does receive the normalized credentials activity back.
 
 ### IRC Credential Validation
 

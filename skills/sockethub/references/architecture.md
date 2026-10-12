@@ -14,12 +14,16 @@ Sockethub runs as multiple cooperating processes:
                               ▲ IPC                              │
                               │                                  ▼
                     ┌─────────┴──────────────────────────────────────┐
-                    │ Platform Workers (isolated processes)           │
-                    │ ┌─────┐ ┌──────┐ ┌───────┐ ┌──────────┐      │
-                    │ │ IRC │ │ XMPP │ │ Feeds │ │ Metadata │ ... │
-                    │ └─────┘ └──────┘ └───────┘ └──────────┘      │
+                    │ Platform Workers (isolated child processes)     │
+                    │ ┌───────────┐ ┌───────────┐ ┌───────┐ ┌──────┐│
+                    │ │ IRC alice │ │ IRC bob   │ │ Feeds │ │ Meta ││
+                    │ └───────────┘ └───────────┘ └───────┘ └──────┘│
                     └────────────────────────────────────────────────┘
 ```
+
+Persistent platforms (IRC, XMPP) get one child process per unique actor +
+credential fingerprint; stateless platforms (Feeds, Metadata) run one shared
+process per platform.
 
 ## Message Flow
 
@@ -45,14 +49,14 @@ Sockethub runs as multiple cooperating processes:
 1. **Connect**: Client establishes Socket.IO connection, server assigns unique session ID
 2. **Initialize**: Client calls `await sc.ready()`, server sends schema registry
 3. **Authenticate**: Client sends credentials via `credentials` event, server encrypts
-   and stores in Redis keyed by session ID + actor ID
+   and stores in Redis keyed by session ID + platform + actor ID
 4. **Operate**: Client sends/receives ActivityStreams messages
 5. **Disconnect**: Session cleanup, credentials removed from Redis, platform connections
    closed if no other sessions reference them
 
 ## Credential Security
 
-All credentials are encrypted using `@sockethub/crypto`:
+All credentials are encrypted using `@sockethub/util/crypto`:
 
 - Each session gets a unique encryption key generated at connection time
 - Credentials are encrypted before storage in Redis
@@ -60,8 +64,10 @@ All credentials are encrypted using `@sockethub/crypto`:
 - Keys are never stored persistently -- lost on server restart
 - Redis key pattern: `sockethub:{parentId}:data-layer:credentials-store:{sessionId}:{credentialId}`
 
-Credentials sent via the `credentials` event are never echoed back to the client
-or logged in plain text. The encryption is per-session, so even if Redis is
+Credentials sent via the `credentials` event are not logged in plain text and
+are never broadcast to other sockets. Note that the `credentials` ack callback
+(when supplied) receives the normalized credentials activity back, so do not
+log that payload. The encryption is per-session, so even if Redis is
 compromised, credentials cannot be decrypted without the in-memory session key.
 
 ## Job Queue
@@ -81,13 +87,18 @@ BullMQ manages the message queue in Redis:
 
 ### Lifecycle
 
-1. **Spawn**: Server spawns worker process for each enabled platform
-2. **Register**: Worker registers its supported actions with the server
-3. **Heartbeat**: Worker sends periodic heartbeats (configurable via
-   `SOCKETHUB_PLATFORM_HEARTBEAT_INTERVAL_MS`)
-4. **Process**: Worker polls its BullMQ queue for jobs
-5. **Timeout**: If heartbeat is missed beyond `SOCKETHUB_PLATFORM_TIMEOUT_MS`,
-   server marks worker as unhealthy and respawns
+1. **Load**: At bootstrap the parent imports each enabled platform module,
+   validates its schema, and reads the supported action types from
+   `schema.messages.properties.type.enum` (plus `credentials` when a
+   credentials schema exists)
+2. **Spawn**: A worker process is created lazily when the first job for its
+   identifier (platform, or platform + actor + credential scope) arrives
+3. **Heartbeat**: Worker sends periodic heartbeats (`SOCKETHUB_PLATFORM_HEARTBEAT_INTERVAL_MS`,
+   default 5000 ms)
+4. **Process**: Worker consumes its BullMQ queue
+5. **Timeout**: If no heartbeat arrives within `SOCKETHUB_PLATFORM_HEARTBEAT_TIMEOUT_MS`
+   (default 15000 ms), the instance is flagged for termination and shut down.
+   A replacement is created lazily on the next job for that identifier
 
 ### Persistent vs Stateless
 
@@ -95,7 +106,8 @@ BullMQ manages the message queue in Redis:
 - Maintain long-lived protocol connections
 - `isInitialized()` returns `true` only when connected
 - Track connection state per actor
-- Connections shared across sessions using the same actor credentials
+- Connections shared across sessions that submit identical credentials for
+  the same actor (keyed by a fingerprint of the credential object)
 - Reconnect behavior differs per platform:
   - **XMPP**: auto-reconnects on recoverable network errors (see below)
   - **IRC**: force-disconnects on error/close/timeout — the client must
@@ -117,12 +129,15 @@ is appropriate:
 - **Non-recoverable** (manual reconnect required): authentication failures,
   protocol errors, policy violations, any unrecognized error
 
-Non-recoverable errors stop the client and mark it uninitialized. The user
-must send new credentials and reconnect.
+Non-recoverable errors stop the client and mark it uninitialized. Stored
+credentials remain available (sliding TTL, default 7 days), so re-issuing a
+`connect` action suffices. The error arrives on the `message` event as
+`{ type: 'connect', error, object: { type: 'connect', status: 'reconnecting' | 'failed', condition } }`.
 
 ## Rate Limiting
 
-- Configurable per-client rate limit (default: 100 events/second)
+- Configurable per-client rate limit via `rateLimiter.*` in the config file
+  (defaults: 100 requests per 1000 ms window, 5000 ms block, 20 connections per IP)
 - Applied at the Socket.IO event level before validation
 - Excess messages are dropped with an error event sent to the client
 
@@ -131,4 +146,3 @@ must send new credentials and reconnect.
 - Multiple Sockethub server instances can share a Redis cluster
 - Platform workers scale independently per platform
 - Redis handles job distribution across workers
-- Socket.IO adapter (e.g., Redis adapter) enables multi-instance client routing

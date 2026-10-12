@@ -110,6 +110,7 @@ sc.socket.emit('credentials', {
 | `secure` | boolean | No | Use TLS (default: `true`) |
 | `sasl` | boolean | No | Enable SASL authentication (auto-enabled when `token` or `password` is set) |
 | `saslMechanism` | string | No | `'PLAIN'` (default) or `'OAUTHBEARER'` |
+| `allowInvalidCert` | boolean | No | Accept invalid/self-signed TLS certificates |
 
 **Validation rules:**
 - `password` and `token` cannot both be present
@@ -123,11 +124,15 @@ sc.socket.emit('credentials', {
 | `connect` | Connect to IRC server using stored credentials | No |
 | `join` | Join a channel | Yes (room) |
 | `leave` | Leave a channel | Yes (room) |
-| `send` | Send a message to a channel or user | Yes (room or person) |
-| `announce` | Send a notice to a channel or user (IRC NOTICE) | Yes (room or person) |
-| `update` | Update nick or topic | Depends on update type |
-| `query` | Query channel or user information | Yes |
+| `send` | Send a PRIVMSG to a channel or user (`/me ` prefix sends a CTCP ACTION, `/notice ` prefix sends a NOTICE; prefix is stripped) | Yes (room or person) |
+| `update` | Update nick (`object.type: 'address'`) or topic (`object.type: 'topic'`) | Depends on update type |
+| `query` | Query channel members (`object.type: 'attendance'`) or list channels (`object.type: 'channels'`, optional `object.name` mask) | Yes |
 | `disconnect` | Disconnect from IRC server | No |
+
+There is no `announce` verb with a handler: send a NOTICE via `send` with
+content prefixed `/notice `. Sending to a channel requires a prior `join`;
+otherwise the ack returns
+`cannot send message to a channel of which you've not first joined.`
 
 ### IRC-Specific Behavior
 
@@ -137,11 +142,16 @@ sc.socket.emit('credentials', {
 - Nick changes emit `update` messages with `object.type: 'address'`
 - Topic changes emit `update` messages with `object.type: 'topic'`
 - User join/leave events emit corresponding `join`/`leave` messages
-- Presence changes (away, back) emit messages with `object.type: 'presence'`
-- Channel user lists come as `attendance` type objects
-- Credentials with a non-empty `password` or `token` are shareable across
-  sockets targeting the same actor. Username-only anonymous credentials are
-  not shareable and may return `username already in use`.
+- MODE changes emit `update` messages with `object.type: 'presence'` carrying
+  a `role` (`owner`, `admin`, `participant`, or `member`); IRC AWAY status is
+  not translated
+- Channel user lists come as `attendance` type objects (with per-nick roles)
+- Incoming CTCP ACTION is delivered with `object.type: 'me'`; incoming NOTICE
+  as a plain `message`
+- Sockets that submit identical credentials (non-empty `password` or `token`)
+  for the same actor share one platform instance. Anonymous credentials are
+  session-private; a second anonymous connection with the same nick fails with
+  the IRC server's own error, e.g. `unable to connect to server: nicknames unavailable`.
 
 ### Example: Send a channel message
 
@@ -154,6 +164,20 @@ sc.socket.emit('message', {
   object: { type: 'message', content: 'Hello channel!' }
 }, (ack) => {
   if (ack?.error) console.error('Send failed:', ack.error);
+});
+```
+
+### Example: Send a NOTICE
+
+```javascript
+sc.socket.emit('message', {
+  '@context': sc.contextFor('irc'),
+  type: 'send',
+  actor: { id: 'mynick@irc.libera.chat', type: 'person' },
+  target: { id: '#sockethub@irc.libera.chat', type: 'room' },
+  object: { type: 'message', content: '/notice Deploy starting in 5 minutes' }
+}, (ack) => {
+  if (ack?.error) console.error('Notice failed:', ack.error);
 });
 ```
 
@@ -233,9 +257,9 @@ sc.socket.emit('credentials', {
 | `send` | Send a message | Yes (person or room) |
 | `update` | Update presence or status | No |
 | `request-friend` | Send a roster subscription request | Yes (person) |
-| `make-friend` | Accept a roster subscription | Yes (person) |
+| `make-friend` | Intended to accept a subscription, but currently sends the same `presence type="subscribe"` as `request-friend` | Yes (person) |
 | `remove-friend` | Remove a roster subscription | Yes (person) |
-| `query` | Query roster or room info | Optional |
+| `query` | Service discovery against `target.id`: `object.type: 'attendance'` (default, disco#items) or `'room-info'` (disco#info). No roster query. | Yes |
 | `disconnect` | Disconnect from XMPP server | No |
 
 ### XMPP-Specific Behavior
@@ -244,8 +268,11 @@ sc.socket.emit('credentials', {
 - Messages to users (`target.type: 'person'`) are sent as `chat` type
 - Presence updates support values: `away`, `chat`, `dnd`, `xa`, `offline`, `online`
 - Message correction is supported via `object['xmpp:replace']` with the original message id
-- Unrecoverable errors (auth failures, policy violations) require manual reconnection
+- Unrecoverable errors (auth failures, policy violations) require re-issuing
+  `connect`; stored credentials remain available (sliding TTL, default 7 days)
 - Recoverable errors (network issues) trigger automatic reconnection
+- Connection errors arrive on `message` as
+  `{ type: 'connect', error, object: { type: 'connect', status: 'reconnecting' | 'failed', condition } }`
 
 ### Example: Send a direct message
 
@@ -285,7 +312,8 @@ sc.socket.emit('message', {
   target: { id: 'newcontact@jabber.org' }
 });
 
-// Accept friend request
+// Accept friend request (caveat: currently sends presence type="subscribe",
+// identical to request-friend, rather than "subscribed")
 sc.socket.emit('message', {
   '@context': sc.contextFor('xmpp'),
   type: 'make-friend',
@@ -311,38 +339,48 @@ Supports RSS 2.0, Atom 1.0, and RSS 1.0/RDF formats. Uses `podparse` for parsing
 
 ### Example: Fetch a feed
 
+Use `actor.type: 'feed'` (the client fills in `person` otherwise). The optional
+`object` accepts only `since` (RFC 3339 date-time; entries published at or
+after it) and `limit` (integer >= 1, applied after `since`, feed order kept).
+
 ```javascript
 sc.socket.emit('message', {
   '@context': sc.contextFor('feeds'),
   type: 'fetch',
-  actor: { id: 'https://blog.example.com/feed.xml' }
+  actor: { id: 'https://blog.example.com/feed.xml', type: 'feed' },
+  object: { since: '2026-01-01T00:00:00Z', limit: 10 }
 });
 ```
 
 ### Response Format
 
-The response is a Collection of Create activities:
+The response is a single top-level `collection` whose `items` are `post`
+activities (one per entry):
 
 ```javascript
 {
+  id: '...',                    // request id, or null
   '@context': [...],
-  type: 'fetch',
-  actor: { id: 'https://blog.example.com/feed.xml' },
-  object: {
-    type: 'collection',
-    items: [
-      {
-        type: 'create',
-        object: {
-          type: 'message',
-          title: 'Article Title',
-          url: 'https://blog.example.com/article',
-          content: 'Article summary...',
-          published: '2026-03-15T10:00:00Z'
-        }
+  type: 'collection',
+  summary: 'Example Blog',      // feed title, or 'Unknown Feed'
+  totalItems: 10,
+  items: [
+    {
+      type: 'post',
+      actor: { id: 'https://blog.example.com/feed.xml', type: 'feed', name: 'Example Blog', link: '...' },
+      object: {
+        type: 'article',          // or 'note'
+        id: 'https://blog.example.com/article',
+        title: 'Article Title',
+        brief: 'Short summary...',
+        content: 'Full content...',
+        contentType: 'html',      // or 'text'
+        url: 'https://blog.example.com/article',
+        published: '2026-03-15T10:00:00Z',
+        datenum: 1773568800000
       }
-    ]
-  }
+    }
+  ]
 }
 ```
 
@@ -363,27 +401,37 @@ Uses `open-graph-scraper` to extract OG tags, page titles, descriptions, and ima
 
 ### Example: Fetch page metadata
 
+Use `actor.type: 'website'`. No `object` is accepted on the request.
+
 ```javascript
 sc.socket.emit('message', {
   '@context': sc.contextFor('metadata'),
   type: 'fetch',
-  actor: { id: 'https://example.com/article' }
+  actor: { id: 'https://example.com/article', type: 'website' }
 });
 ```
 
 ### Response Format
 
+The response echoes the `fetch` with a `page` object. `image` is an array
+(from open-graph-scraper), so read `msg.object.image?.[0]?.url`.
+
 ```javascript
 {
   '@context': [...],
   type: 'fetch',
-  actor: { id: 'https://example.com/article' },
+  actor: { id: 'https://example.com/article', type: 'website' },
   object: {
-    type: 'message',
+    type: 'page',
     title: 'Page Title',
+    name: 'Site Name',
     description: 'Page description from OG tags',
-    image: 'https://example.com/og-image.jpg',
-    url: 'https://example.com/article'
+    image: [{ url: 'https://example.com/og-image.jpg', width: 1200, height: 630, alt: '...' }],
+    url: 'https://example.com/article',
+    language: 'en',
+    favicon: 'https://example.com/favicon.ico',
+    charset: 'utf-8',
+    video: { url: '...', thumbnail: '...', width: 0, height: 0, duration: 0 }  // optional
   }
 }
 ```
