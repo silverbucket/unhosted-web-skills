@@ -216,7 +216,8 @@ const Bookmarks = {
         },
 
         // Share publicly; resolves with a URL (undefined if not connected;
-        // on Dropbox it's a preview page — see Third-Party Backends)
+        // on Dropbox it's a preview page; on Google Drive it REJECTS with
+        // "not implemented" — see Third-Party Backends)
         async share(id) {
           const bookmark = await privateClient.getObject(id);
           if (!bookmark) throw new Error(`Bookmark ${id} not found`);
@@ -416,7 +417,7 @@ reload to `sync-done`:
 let hasChanges = false;
 client.on('change', () => { hasChanges = true; });
 
-remoteStorage.on('sync-done', ({ completed }) => {
+rs.on('sync-done', ({ completed }) => {
   if (completed && hasChanges) { // completed:false → failed requests will retry
     hasChanges = false;
     reloadFromCache(); // single getAll() per cycle
