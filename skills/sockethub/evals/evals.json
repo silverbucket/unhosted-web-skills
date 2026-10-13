@@ -80,7 +80,7 @@
     {
       "id": 3,
       "prompt": "I need to build an RSS reader that fetches multiple feeds and also generates link previews for shared URLs. Using Sockethub, show me how to fetch an RSS feed from https://blog.example.com/feed.xml and get Open Graph metadata for https://example.com/article. Handle the responses properly.",
-      "expected_output": "Uses feeds and metadata platforms correctly as stateless (no credentials or connect step), uses contextFor('feeds') and contextFor('metadata'), properly handles the Collection response format for feeds, handles the OG metadata response, does NOT attempt to set credentials or connect for these platforms.",
+      "expected_output": "Uses feeds and metadata platforms correctly as stateless (no credentials or connect step), uses contextFor('feeds') and contextFor('metadata'), uses actor.type 'feed' / 'website', handles the feeds response as a top-level `collection` whose `items` are `post` entries (reads post.object.title / url, not msg.object.items), handles the metadata `page` object (image is an array, so reads image[0].url), does NOT attempt to set credentials or connect for these platforms.",
       "assertions": [
         {
           "name": "no_credentials_for_stateless",
@@ -96,7 +96,7 @@
         },
         {
           "name": "handles_collection_response",
-          "description": "Properly handles the Collection response with items array from feed fetch",
+          "description": "Properly handles the top-level collection response: iterates msg.items and reads post.object fields from feed fetch",
           "type": "contains",
           "value": "items"
         },
@@ -105,6 +105,12 @@
           "description": "Uses both feeds and metadata platforms",
           "type": "custom",
           "check": "Code references both contextFor('feeds') and contextFor('metadata')"
+        },
+        {
+          "name": "no_nested_object_items",
+          "description": "Does not read feed entries from msg.object.items (items are top-level on the collection)",
+          "type": "not_contains",
+          "value": "object.items"
         }
       ],
       "files": []
@@ -144,7 +150,7 @@
     {
       "id": 5,
       "prompt": "I'm building a multi-protocol chat app. I need to handle reconnection and errors properly. What events should I listen for, and how should I structure the error handling for both IRC and XMPP connections?",
-      "expected_output": "Covers ready/init_error events for initialization, connect_error for transport failures, ack callbacks with error property for per-message failures. Explains that XMPP auto-reconnects on recoverable network errors but not on auth/protocol failures. Explains that IRC does NOT auto-reconnect -- after connection loss the client must re-issue a connect action. Does not claim both platforms auto-reconnect.",
+      "expected_output": "Covers ready/init_error events for initialization, connect_error for transport failures, ack callbacks with error property for per-message failures. Explains that XMPP auto-reconnects on recoverable network errors but not on auth/protocol failures. Explains that IRC does NOT auto-reconnect -- after connection loss the client must re-issue a connect action. Does not claim both platforms auto-reconnect. Mentions that XMPP connection errors arrive on the 'message' event as a connect activity with object.status 'reconnecting' or 'failed', and that after a non-recoverable error re-issuing connect is enough because stored credentials persist.",
       "assertions": [
         {
           "name": "covers_ready_event",
@@ -175,6 +181,12 @@
           "description": "Makes clear that IRC does not auto-reconnect and requires client-driven recovery",
           "type": "custom",
           "check": "Response indicates IRC does not auto-reconnect, or that the client must manually reconnect for IRC after connection loss"
+        },
+        {
+          "name": "xmpp_status_signal",
+          "description": "Mentions the XMPP connect status signal ('reconnecting' / 'failed') delivered on the message event",
+          "type": "custom",
+          "check": "Response references the connect activity with object.status 'reconnecting' or 'failed' (or equivalent) for XMPP connection errors"
         }
       ],
       "files": []
@@ -182,19 +194,31 @@
     {
       "id": 6,
       "prompt": "I want to send a channel-wide notice (not a regular message) to #dev on irc.libera.chat using Sockethub. How do I do that?",
-      "expected_output": "Uses the `announce` action type (not `send`), which maps to an IRC NOTICE. Follows the standard credentials -> connect -> announce flow with contextFor('irc') and an ack callback.",
+      "expected_output": "Uses the `send` action type with object.type 'message' and content prefixed with '/notice ' (e.g. '/notice Deploy starting'), which the IRC platform sends as an IRC NOTICE with the prefix stripped. Explicitly does NOT use an `announce` action -- it has no handler in the IRC platform. Notes that the channel must be joined first. Follows credentials -> connect -> join -> send with contextFor('irc') and an ack callback.",
       "assertions": [
         {
-          "name": "uses_announce_action",
-          "description": "Uses type: 'announce' for IRC NOTICE",
+          "name": "uses_notice_prefix",
+          "description": "Message content starts with '/notice ' so the IRC platform sends a NOTICE",
           "type": "contains",
-          "value": "announce"
+          "value": "/notice"
         },
         {
-          "name": "not_send",
-          "description": "Does not use type: 'send' for the notice",
+          "name": "uses_send_action",
+          "description": "Uses type: 'send' for the notice",
           "type": "custom",
-          "check": "The announce/notice message uses type 'announce', not type 'send'"
+          "check": "The emitted notice message has type 'send' (any quote style)"
+        },
+        {
+          "name": "no_announce_action",
+          "description": "Does not use a type: 'announce' action (it has no IRC handler)",
+          "type": "custom",
+          "check": "No emitted message uses type: 'announce'; mentioning that announce does not exist is fine"
+        },
+        {
+          "name": "joins_first",
+          "description": "Joins the channel before sending, and does not claim the platform rejects an un-joined NOTICE (only PRIVMSG is gated; +n channels drop outside notices server-side)",
+          "type": "custom",
+          "check": "A join for #dev appears before the send emit, and the answer does not state that Sockethub returns the 'not first joined' error for a /notice"
         },
         {
           "name": "uses_context_for",

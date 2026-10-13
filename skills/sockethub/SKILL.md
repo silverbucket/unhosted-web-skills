@@ -53,12 +53,14 @@ Invoke when you need to:
 Sockethub runs as a multi-process system:
 
 - **Server process**: Express + Socket.IO hub handling validation, encryption, and routing
-- **Platform workers**: Isolated processes per protocol (IRC, XMPP, Feeds, Metadata)
+- **Platform workers**: Isolated child processes. Persistent platforms (IRC, XMPP)
+  get one process per unique actor + credential fingerprint; stateless platforms
+  (Feeds, Metadata) share one process per platform
 - **Redis/BullMQ**: Job queue for encrypted message routing between server and workers
 - **IPC**: Platform-to-client messages bypass Redis for low latency
 
 Each client Socket.IO connection gets a unique session with its own encryption key.
-Credentials are encrypted at rest in Redis via `@sockethub/crypto`. Platform crashes
+Credentials are encrypted at rest in Redis via `@sockethub/util/crypto`. Platform crashes
 are isolated -- one worker failing does not affect others.
 
 **Platform types:**
@@ -101,7 +103,7 @@ services:
     image: redis:7-alpine
     ports: ["6379:6379"]
   sockethub:
-    image: sockethub/sockethub:alpha
+    image: ghcr.io/sockethub/sockethub:next
     ports: ["10550:10550"]
     environment:
       REDIS_URL: redis://redis:6379
@@ -114,20 +116,25 @@ docker compose up -d
 
 ### Client Connection
 
+```bash
+npm install @sockethub/client socket.io-client
+```
+
+`socket.io-client` is an optional peer dependency (`connect()` imports it when
+no `io` global exists). A Sockethub server also serves `/socket.io.js` and
+`/sockethub-client.js` for plain `<script>` usage.
+
 ```javascript
 import SockethubClient from '@sockethub/client';
-import { io } from 'socket.io-client';
 
-const socket = io('http://localhost:10550', { path: '/sockethub' });
-const sc = new SockethubClient(socket, { initTimeoutMs: 5000 });
+// Primary entry point: discovers the Socket.IO endpoint from the base URL
+const sc = await SockethubClient.connect('http://localhost:10550', { initTimeoutMs: 5000 });
+// Fallback (older servers, proxies, shared Manager): bring your own socket
+// import { io } from 'socket.io-client'; const sc = new SockethubClient(io('http://localhost:10550', { path: '/sockethub' }));
 
 // Listen for readiness and errors
-sc.socket.on('ready', (info) => {
-  console.log('Sockethub ready:', info.reason, info.platforms);
-});
-sc.socket.on('init_error', (e) => {
-  console.warn('Sockethub init failed:', e.error);
-});
+sc.socket.on('ready', (info) => console.log('ready:', info.reason, info.platforms));
+sc.socket.on('init_error', (e) => console.warn('init failed:', e.error));
 
 // Wait for schema registry to load (messages sent before ready() are queued)
 await sc.ready();
@@ -146,7 +153,7 @@ will fail. Stateless platforms (Feeds, Metadata) skip directly to operate.
 
 Credentials are sent via the dedicated `credentials` event (not `message`).
 The server encrypts and stores them for the session. Each credential is keyed
-by the `actor.id`, so you can have multiple identities per platform.
+by platform + `actor.id`, so you can have multiple identities per platform.
 
 ```javascript
 sc.socket.emit('credentials', {
@@ -227,10 +234,8 @@ and per-platform code examples.
 
 ```javascript
 import SockethubClient from '@sockethub/client';
-import { io } from 'socket.io-client';
 
-const socket = io('http://localhost:10550', { path: '/sockethub' });
-const sc = new SockethubClient(socket);
+const sc = await SockethubClient.connect('http://localhost:10550');
 await sc.ready();
 
 const actorId = 'mynick@irc.libera.chat';
@@ -257,7 +262,7 @@ sc.socket.emit('message', {
   actor: { id: actorId, type: 'person' }
 });
 
-// 3. Join channel
+// 3. Join channel (required before a PRIVMSG; /notice skips the check but +n channels drop it)
 sc.socket.emit('message', {
   '@context': sc.contextFor('irc'),
   type: 'join',
@@ -275,6 +280,7 @@ sc.socket.emit('message', {
 }, (ack) => {
   if (ack?.error) console.error('Send failed:', ack.error);
 });
+// '/me ...' content becomes a CTCP ACTION, '/notice ...' an IRC NOTICE (no announce verb)
 ```
 
 ### Example 2: XMPP -- Send a direct message
@@ -317,14 +323,15 @@ Stateless platforms need no credentials or connect step.
 sc.socket.emit('message', {
   '@context': sc.contextFor('feeds'),
   type: 'fetch',
-  actor: { id: 'https://example.com/feed.rss' }
+  actor: { id: 'https://example.com/feed.rss', type: 'feed' },
+  object: { since: '2026-01-01T00:00:00Z', limit: 10 }  // optional
 });
 
-// Response is a Collection of Create activities with feed entries
+// Response is a top-level `collection` whose `items` are `post` activities
 sc.socket.on('message', (msg) => {
-  if (msg['@context']?.some(c => c.includes('/feeds/'))) {
-    msg.object.items.forEach(entry => {
-      console.log(entry.object.title, entry.object.url);
+  if (msg.type === 'collection' && msg['@context']?.some(c => c.includes('/feeds/'))) {
+    msg.items.forEach(post => {
+      console.log(post.object.title, post.object.url, post.object.published);
     });
   }
 });
@@ -336,12 +343,13 @@ sc.socket.on('message', (msg) => {
 sc.socket.emit('message', {
   '@context': sc.contextFor('metadata'),
   type: 'fetch',
-  actor: { id: 'https://example.com/article' }
+  actor: { id: 'https://example.com/article', type: 'website' }
 });
 
+// Response object is type 'page'; image is an array of { url, width?, height?, alt? }
 sc.socket.on('message', (msg) => {
   if (msg['@context']?.some(c => c.includes('/metadata/'))) {
-    console.log(msg.object.title, msg.object.description, msg.object.image);
+    console.log(msg.object.title, msg.object.description, msg.object.image?.[0]?.url);
   }
 });
 ```
@@ -350,26 +358,30 @@ sc.socket.on('message', (msg) => {
 
 ```
 sockethub [options]
+  -c, --config <path>        Config file (default ./sockethub.config.json, env SOCKETHUB_CONFIG)
+      --write-config [path]  Write a default config file and exit ("-" for stdout)
+      --host <host>          Address to bind (env: HOST)
+      --port <port>          Port to bind (env: PORT, default: 10550)
+      --redis.url <url>      Redis URL (env: REDIS_URL)
+      --cors.origin <list>   Allowed CORS origin(s) (env: SOCKETHUB_CORS_ORIGIN)
+      --sentry.dsn <dsn>     Sentry DSN; also --sentry-test, --sentry-test-crash
+      --examples             Serve the bundled example pages
+      --info                 Print runtime information
+  -v, --version / -h, --help
 
-Options:
-  --port <number>        Server port (default: 10550, env: PORT)
-  --host <string>        Server host (default: localhost, env: HOST)
-  --config, -c <path>    Path to sockethub.config.json
-  --examples             Enable example pages at /examples
-  --info                 Display runtime information
-  --redis.url <url>      Redis connection URL (env: REDIS_URL)
-  --platforms <list>     Comma-separated enabled platforms
-  --rateLimit <number>   Max events per second per client (default: 100)
-
-Environment: PORT, HOST, REDIS_URL, LOG_LEVEL,
-  SOCKETHUB_PLATFORM_HEARTBEAT_INTERVAL_MS, SOCKETHUB_PLATFORM_TIMEOUT_MS
+Env: SOCKETHUB_CONFIG, PORT, HOST, REDIS_URL, LOG_LEVEL, LOG_FILE, LOG_FILE_LEVEL,
+  SOCKETHUB_CORS_ORIGIN, SOCKETHUB_CREDENTIALS_TTL_MS,
+  SOCKETHUB_PLATFORM_HEARTBEAT_INTERVAL_MS, SOCKETHUB_PLATFORM_HEARTBEAT_TIMEOUT_MS
 ```
+
+Enabled `platforms` and `rateLimiter.*` settings are config-file only; there
+are no `--platforms` or `--rateLimit` flags.
 
 ## Supported Platforms
 
 | Platform | Type | Actions | Description |
 |----------|------|---------|-------------|
-| IRC (`irc`) | Persistent | connect, join, leave, send, announce, update, query, disconnect | Internet Relay Chat |
+| IRC (`irc`) | Persistent | connect, join, leave, send, update, query, disconnect | Internet Relay Chat |
 | XMPP (`xmpp`) | Persistent | connect, join, leave, send, update, request-friend, make-friend, remove-friend, query, disconnect | Extensible Messaging and Presence |
 | Feeds (`feeds`) | Stateless | fetch | RSS 2.0, Atom 1.0, RSS 1.0/RDF |
 | Metadata (`metadata`) | Stateless | fetch | Open Graph and page metadata extraction |
@@ -397,8 +409,11 @@ because it derives context URLs from the server's schema registry and stays
 correct across versions. See `references/schema-validation.md` for the full
 context URL structure.
 
-**Valid object types:** `message`, `me`, `credentials`, `attendance`, `presence`,
-`topic`, `address`
+**Object types are per-platform** (validated by each platform's schema):
+- IRC inbound: `message`, `topic`, `address`, `attendance`, `channels`
+  (`/me` is expressed as `send` content, not an object type)
+- XMPP inbound: `message`, `presence`, `attendance`, `room-info`
+- Feeds: `object` is optional `{ since, limit }`; Metadata: no `object`
 
 If `actor` is provided as a string, Sockethub expands it using any previously
 saved ActivityObject with the same id. If none exists, it expands to `{ id }`.
@@ -412,23 +427,26 @@ See `references/schema-validation.md` for full schema details.
 ```javascript
 import SockethubClient from '@sockethub/client';
 
-// Constructor options
-const sc = new SockethubClient(socket, {
+// Options (same for connect() and the constructor; defaults shown)
+const sc = await SockethubClient.connect('http://localhost:10550', {
   initTimeoutMs: 5000,      // Schema registry load timeout
-  maxQueuedOutbound: 100,   // Max queued messages before ready()
+  maxQueuedOutbound: 1000,  // Max queued messages before ready()
   maxQueuedAgeMs: 30000     // Max age for queued messages
+  // connect() only: io, socketOptions, fetch, discoveryTimeoutMs
 });
 
 // Initialize -- messages sent before ready() are queued and flushed afterward
 await sc.ready();
 
-// Properties
-sc.socket           // Underlying Socket.IO instance
-sc.ActivityStreams   // ActivityStreams helper library
-
-// Methods
-sc.contextFor('irc')   // Build canonical @context array for a platform
-sc.clearCredentials()  // Remove stored credentials
+// Properties: sc.socket (emitter over Socket.IO), sc.descriptor, sc.serverOrigin
+sc.contextFor('irc')          // Build canonical @context array for a platform
+sc.clearCredentials()         // Remove stored credentials (no replay on reconnect)
+sc.validateActivity(msg)      // Validate locally; '' when valid, else error string
+sc.getRegisteredPlatforms()   // Platform registry entries from the server
+sc.getPlatformSchema('irc')                // 'messages' JSON schema (default)
+sc.getPlatformSchema('irc', 'credentials') // 'credentials' JSON schema
+sc.isReady() / sc.getInitState()
+sc.endpointUrl('httpActions') // Absolute URL of an advertised endpoint, or undefined
 
 // Events
 sc.socket.on('message', handler)         // Incoming platform messages
@@ -437,22 +455,25 @@ sc.socket.on('connect_error', handler)   // Socket.IO connection failed
 sc.socket.on('disconnect', handler)      // Socket.IO transport disconnected
 sc.socket.on('ready', handler)           // Schema registry loaded; client is ready
 sc.socket.on('init_error', handler)      // Client initialization failed
-sc.socket.on('client_error', handler)    // Client-side validation error
+sc.socket.on('client_error', handler)    // Client-side error, only when emit() had no ack callback
 sc.socket.emit('message', activity, cb)  // Send ActivityStreams message; cb(result) on response
 sc.socket.emit('credentials', creds, cb) // Set platform credentials; cb(result) on response
 ```
 
 Treat any ack callback payload containing an `error` property as failure.
+Client-side validation failures are delivered to the ack callback as
+`{ error }` when one is supplied; `client_error` fires only without one.
 Not every inbound `message` is a response to your last request — platforms
 also push asynchronously (e.g. incoming IRC `PRIVMSG`, XMPP presence).
 
 ## Session Sharing
 
-Persistent platforms can attach multiple sockets to one running platform
-instance when they target the same actor and the credentials pass share
-validation. Share is allowed only when credentials include a non-empty
-`password` or `token`. Username-only anonymous credentials are not shareable
-and may return `username already in use`.
+Persistent platforms attach multiple sockets to one running platform instance
+only when they target the same actor and submit identical credentials (the
+instance is keyed by a fingerprint of the submitted credential object), which
+requires a non-empty `password` or `token`. Anonymous credentials get a
+session-private instance; a second anonymous connection with the same nick fails
+with the IRC server's own error, e.g. `unable to connect to server: nicknames unavailable`.
 
 ## What to Avoid
 
@@ -468,12 +489,12 @@ and may return `username already in use`.
 
 ## Requirements
 
-- Bun >= 1.2.4 (or Node.js 18+)
-- Redis >= 6.0
+- Node.js >= 20 and Redis >= 6 to run (release image is `node:22-slim`)
+- Bun >= 1.2.4 only for developing from source
 
 ## Related Packages
 
-`@sockethub/client`, `@sockethub/server`, `@sockethub/schemas`,
-`@sockethub/activity-streams`, `@sockethub/crypto`, `@sockethub/data-layer`,
-`@sockethub/platform-irc`, `@sockethub/platform-xmpp`,
-`@sockethub/platform-feeds`, `@sockethub/irc2as`
+`sockethub` (CLI bundle), `@sockethub/client`, `@sockethub/server`, `@sockethub/schemas`,
+`@sockethub/util` (crypto at `@sockethub/util/crypto`), `@sockethub/data-layer`,
+`@sockethub/logger`, `@sockethub/irc2as`, `@sockethub/dav`, and the platforms
+`@sockethub/platform-{irc,xmpp,feeds,metadata,caldav,carddav,dummy}`
