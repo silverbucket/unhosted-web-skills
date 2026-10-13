@@ -442,13 +442,15 @@ rs.setApiKeys({ dropbox: 'APP_KEY', googledrive: 'CLIENT_ID' });
 
 **Dropbox**: Register a scoped app with all seven scopes listed under Example 3
 (including `sharing.read`/`sharing.write`, or auth fails with `invalid_scope`).
-Limitations: 150 MB max file, case-insensitive paths. `getItemURL()` works for
-`/public/` files but returns a shared-link *preview page*; replace `dl=0` with
-`raw=1` in the URL to get the raw file.
+Auth is OAuth 2 **PKCE** (authorization code + refresh token), so no "implicit
+grant" setting is needed and sessions survive token expiry. Limitations: 150 MB
+max file, case-insensitive paths. `getItemURL()` works for `/public/` files but
+returns a shared-link *preview page*; replace `dl=0` with `raw=1` for the raw file.
 
-**Google Drive**: Enable Drive API, create OAuth 2.0 browser credentials.
-Unverified apps show a Google security warning on connect (get verified for
-production). Limitations: no public sharing (#1051), no `getItemURL()` (#1054).
+**Google Drive**: Enable Drive API, create OAuth 2.0 browser credentials. Auth is
+the **implicit** flow (short-lived token, no refresh) — expect `Unauthorized` →
+`reconnect()` after about an hour. Unverified apps show a Google security warning
+on connect. Limitations: no public sharing (#1051), no `getItemURL()` (#1054).
 
 ## Error Handling
 
@@ -482,19 +484,17 @@ try {
 
 ## Node.js Usage
 
-Needs native `fetch` (Node 18+; CI tests 22/24/26). No IndexedDB/localStorage —
-uses **in-memory storage** (data lost on exit; Deno has localStorage) — and no
-browser OAuth: pass a pre-acquired token to `rs.connect(address, token)`. Set
+Needs native `fetch` (Node 18+; CI tests 22/24/26). No IndexedDB/localStorage, so
+**in-memory storage** (lost on exit; Deno has localStorage); no browser OAuth, so
+pass a pre-acquired token to `rs.connect(address, token)`. Set
 `discovery: { allowPrivateAddresses: false }` to re-enable WebFinger's SSRF guard.
 
 ## Requirements
 
 - Browser (any modern browser with IndexedDB) or Node.js with native `fetch` (18+)
-- npm package: `remotestoragejs`
-- Optional: `remotestorage-widget` for the connect UI
+- npm: `remotestoragejs`; optional `remotestorage-widget` for the connect UI
 
 ## Related Packages
 
-- `remotestoragejs` — Core library (this skill)
-- `remotestorage-widget` — Drop-in connect/sync UI widget
+- `remotestoragejs` — Core library (this skill); `remotestorage-widget` — connect/sync UI
 - `rs.js` community modules — Shared data modules (contacts, bookmarks, etc.)
