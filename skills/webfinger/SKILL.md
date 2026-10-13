@@ -250,12 +250,11 @@ All four options are independent; pass any subset.
 | `allow_private_addresses`  | `false` | Disable the SSRF blocklist. **Development only** — never set `true` in production.                         |
 
 Setting `uri_fallback: true` is useful only against deployments that serve a
-JSON body at `/.well-known/host-meta` or `/.well-known/host-meta.json` — for
-example, a server that has not migrated to the RFC 7033 WebFinger path but
-already offers JRD. webfinger.js@3.1.0 does not parse XML; a classic XML
-host-meta response (`application/xrd+xml`) rejects with
-`WebFingerError: invalid json` and the fallback does not help. Each fallback
-miss costs one extra HTTP round-trip.
+JSON body at `/.well-known/host-meta` or `/.well-known/host-meta.json` (e.g. a
+server not yet on the RFC 7033 path but already offering JRD). webfinger.js@3.1.0
+does not parse XML; a classic XML host-meta response (`application/xrd+xml`)
+rejects with `WebFingerError: invalid json` and the fallback does not help. Each
+fallback miss costs one extra HTTP round-trip.
 
 ## API Reference
 
@@ -401,9 +400,10 @@ defaults. Treat the defaults as the baseline; only relax them with intent.
   the target's scheme, so an HTTPS→HTTP redirect is followed even with
   `tls_only: true`, although RFC 7033 §4.2 requires clients to reject it.
   **`tls_only` does not cover `localhost`**: for `localhost` /
-  `localhost.localdomain` the library selects HTTP unconditionally, regardless
-  of this flag. Reaching a local WebFinger server therefore also requires
-  `allow_private_addresses: true`.
+  `localhost.localdomain`, with or without a `:port` (`alice@localhost:8000`
+  works), the library selects HTTP unconditionally, regardless of this flag.
+  Reaching a local WebFinger server therefore also requires
+  `allow_private_addresses: true`; do not also set `tls_only: false` for it.
 - **Private and internal addresses are blocked** by default — including DNS
   resolution. Blocked ranges:
   - Loopback / unspecified: `127.0.0.0/8`, `0.0.0.0/8`, `::1`, `::`,

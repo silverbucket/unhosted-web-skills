@@ -1,0 +1,119 @@
+{
+  "skill_name": "webfinger",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Write a Node.js (ESM) function resolveActor(handle) using webfinger.js that takes a fediverse handle like @alice@mastodon.social and returns the ActivityPub actor URL, with robust error handling that distinguishes 'not found', network failure, and other errors. Also provide a CommonJS version.",
+      "expected_output": "See assertions (fediverse-handle-errors)",
+      "files": [],
+      "assertions": [
+        {
+          "name": "a1",
+          "description": "Strips the leading @ and calls lookup()/lookupLink appropriately; extracts the link with rel 'self' and type application/activity+json from result.object.links (not via lookupLink, which has no 'self' alias)",
+          "type": "custom",
+          "check": "Strips the leading @ and calls lookup()/lookupLink appropriately; extracts the link with rel 'self' and type application/activity+json from result.object.links (not via lookupLink, which has no 'self' alias)"
+        },
+        {
+          "name": "a2",
+          "description": "ESM version imports WebFingerError as a named export and uses err.status === 404 for not-found",
+          "type": "custom",
+          "check": "ESM version imports WebFingerError as a named export and uses err.status === 404 for not-found"
+        },
+        {
+          "name": "a3",
+          "description": "CommonJS version does NOT destructure WebFingerError from require('webfinger.js'); uses err.name === 'WebFingerError' or equivalent",
+          "type": "custom",
+          "check": "CommonJS version does NOT destructure WebFingerError from require('webfinger.js'); uses err.name === 'WebFingerError' or equivalent"
+        },
+        {
+          "name": "a4",
+          "description": "Treats a raw TypeError as transport failure, and does not classify an 'HTTPS-only violation' as a WebFingerError case",
+          "type": "custom",
+          "check": "Treats a raw TypeError as transport failure, and does not classify an 'HTTPS-only violation' as a WebFingerError case"
+        },
+        {
+          "name": "a5",
+          "description": "Does not restrict handles to ASCII or warn that the address is sent unencoded",
+          "type": "custom",
+          "check": "Does not restrict handles to ASCII or warn that the address is sent unencoded"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Using webfinger.js, I need to look up remoteStorage info for users whose addresses may have non-ASCII characters, e.g. jürgen@müller.example, and also look up a plain https URL like https://example.com/profile?id=42. Is that supported? Show code and explain what the library sends on the wire.",
+      "expected_output": "See assertions (international-handle)",
+      "files": [],
+      "assertions": [
+        {
+          "name": "a1",
+          "description": "States non-ASCII addresses ARE supported (3.1.0+): userpart NFC-normalized and percent-encoded, host converted to punycode (e.g. acct:j%C3%BCrgen@xn--mller-kva.example)",
+          "type": "custom",
+          "check": "States non-ASCII addresses ARE supported (3.1.0+): userpart NFC-normalized and percent-encoded, host converted to punycode (e.g. acct:j%C3%BCrgen@xn--mller-kva.example)"
+        },
+        {
+          "name": "a2",
+          "description": "States a full https:// URL with a query string is supported and percent-encoded on the wire (no stray-parameter corruption)",
+          "type": "custom",
+          "check": "States a full https:// URL with a query string is supported and percent-encoded on the wire (no stray-parameter corruption)"
+        },
+        {
+          "name": "a3",
+          "description": "Does NOT tell the user to restrict addresses to [A-Za-z0-9._-] or claim the library concatenates the address verbatim",
+          "type": "custom",
+          "check": "Does NOT tell the user to restrict addresses to [A-Za-z0-9._-] or claim the library concatenates the address verbatim"
+        },
+        {
+          "name": "a4",
+          "description": "Shows the Accept header the library sends as application/jrd+json, application/json (or at least does not claim only application/jrd+json is the client's header)",
+          "type": "custom",
+          "check": "Shows the Accept header the library sends as application/jrd+json, application/json (or at least does not claim only application/jrd+json is the client's header)"
+        },
+        {
+          "name": "a5",
+          "description": "Uses lookupLink(addr, 'remotestorage') or result.idx.links.remotestorage for the remoteStorage link and reads the properties for version/OAuth",
+          "type": "custom",
+          "check": "Uses lookupLink(addr, 'remotestorage') or result.idx.links.remotestorage for the remoteStorage link and reads the properties for version/OAuth"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I'm running a local WebFinger server on http://localhost:8000 for development and deploying to Node later. Show how to configure webfinger.js for local dev vs production, what Node version I need, and what SSRF protections it provides and doesn't provide.",
+      "expected_output": "See assertions (local-dev-security)",
+      "files": [],
+      "assertions": [
+        {
+          "name": "a1",
+          "description": "Local dev config sets allow_private_addresses: true and explains localhost is always reached over HTTP regardless of tls_only",
+          "type": "custom",
+          "check": "Local dev config sets allow_private_addresses: true and explains localhost is always reached over HTTP regardless of tls_only"
+        },
+        {
+          "name": "a2",
+          "description": "Production config keeps allow_private_addresses: false and tls_only: true",
+          "type": "custom",
+          "check": "Production config keeps allow_private_addresses: false and tls_only: true"
+        },
+        {
+          "name": "a3",
+          "description": "States Node.js >= 22.12 (engines) rather than 18+, and that the DNS SSRF check is skipped on older Node",
+          "type": "custom",
+          "check": "States Node.js >= 22.12 (engines) rather than 18+, and that the DNS SSRF check is skipped on older Node"
+        },
+        {
+          "name": "a4",
+          "description": "Lists protections: private-range blocklist incl. IPv4-mapped/NAT64 IPv6, DNS-resolution check, redirect cap of 3 with re-validation, per-attempt timeout",
+          "type": "custom",
+          "check": "Lists protections: private-range blocklist incl. IPv4-mapped/NAT64 IPv6, DNS-resolution check, redirect cap of 3 with re-validation, per-attempt timeout"
+        },
+        {
+          "name": "a5",
+          "description": "Lists gaps honestly: no HTTPS→HTTP redirect rejection, no response-size cap, Content-Type not enforced",
+          "type": "custom",
+          "check": "Lists gaps honestly: no HTTPS→HTTP redirect rejection, no response-size cap, Content-Type not enforced"
+        }
+      ]
+    }
+  ]
+}
