@@ -200,7 +200,9 @@ Errors come in three shapes from webfinger.js@3.1.0:
    server, malformed JRD, request timeout.
 2. **Raw `TypeError`** — propagated verbatim from the runtime's `fetch()` for
    transport failures (DNS failure, TLS handshake failure, network unreachable,
-   and — in browsers — CORS rejection). The library does not wrap these.
+   and — in browsers — CORS rejection). The library does not wrap these. A
+   JSON `null` response body also ends here (reading `.links` off `null`
+   throws), so don't report every `TypeError` as a network outage.
 3. **Plain string** (only from `lookupLink`) — `'unsupported rel <rel>'` or
    `'no links found with rel="<rel>"'`. Not an `Error` instance, so
    `instanceof Error` misses them.
@@ -225,8 +227,8 @@ try {
       console.error(`WebFinger failed (${err.status ?? 'no status'}): ${err.message}`);
     }
   } else if (err instanceof TypeError) {
-    // Transport-level failure from fetch: DNS, TLS, network, or CORS.
-    console.error('Network failure:', err.message);
+    // Transport failure from fetch (DNS, TLS, network, CORS) — or a `null` JSON body.
+    console.error('Network or malformed-response failure:', err.message);
   } else if (typeof err === 'string') {
     // 'unsupported rel <rel>' or 'no links found with rel="<rel>"'
     console.warn('lookupLink rejection:', err);
@@ -244,7 +246,7 @@ All four options are independent; pass any subset.
 |----------------------------|---------|------------------------------------------------------------------------------------------------------------|
 | `tls_only`                 | `true`  | Require HTTPS for non-localhost hosts. **Localhost is always reached over HTTP**, regardless of this setting (webfinger.js@3.1.0 unconditionally selects `http://` for `localhost` / `localhost.localdomain`). When `false`, the library will also retry over HTTP for any host if the HTTPS request fails. |
 | `uri_fallback`             | `false` | If `/.well-known/webfinger` fails, also try `/.well-known/host-meta` and `/.well-known/host-meta.json`. See note below — webfinger.js parses all three paths as JRD (JSON), so legacy XML host-meta responses will not succeed. |
-| `request_timeout`          | `10000` | Timeout in milliseconds **per HTTP attempt** — every redirect hop, fallback URI and protocol retry gets a fresh budget. Worst-case wall time ≈ timeout × (redirects + 1) × URIs × protocols. |
+| `request_timeout`          | `10000` | Timeout in milliseconds **per HTTP attempt** — every redirect hop, fallback URI and protocol retry gets a fresh budget, so the HTTP budget alone is ≈ timeout × (redirects + 1) × URIs × protocols. The DNS-resolution SSRF check (Node/Bun) runs *outside* this timeout for the initial host and each redirect host, so slow resolvers can extend a lookup further. |
 | `allow_private_addresses`  | `false` | Disable the SSRF blocklist. **Development only** — never set `true` in production.                         |
 
 Setting `uri_fallback: true` is useful only against deployments that serve a
@@ -271,9 +273,11 @@ new WebFinger(cfg?: Partial<WebFingerConfig>)
 lookup(address: string): Promise<WebFingerResult>
 ```
 
-Accepts a bare address (`user@domain`), an `acct:` URI, or any full URI with
-a scheme (`https://example.com/p?x=1`); bare addresses are treated as `acct:`
-automatically. Since 3.1.0 the resource is percent-encoded before it goes into
+Accepts a bare address (`user@domain`), an `acct:` URI, or a hierarchical URI
+containing `://` (`https://example.com/p?x=1`); bare addresses are treated as
+`acct:` automatically. Scheme-only forms are **not** parsed as URIs: `mailto:alice@example.com`
+becomes `acct:mailto:alice@example.com`; a scheme with neither `@` nor `://`
+rejects with `invalid useraddress format`. Since 3.1.0 the resource is percent-encoded before it goes into
 the query string (reserved characters such as `&`, `#`, `?`, `+`, `=` are
 escaped; `:`, `@` and `/` stay literal), internationalized hostnames are
 converted to A-labels (punycode) and the userpart is NFC-normalized — so
@@ -287,7 +291,8 @@ error-handling notes below.
 - Library-level errors (bad address, SSRF block, HTTP 4xx/5xx, malformed JRD,
   timeout) reject with `WebFingerError` (see below).
 - Transport-level `fetch` failures (DNS failure, TLS handshake failure,
-  network unreachable, CORS rejection in the browser) are **not** wrapped —
+  network unreachable, CORS rejection in the browser) and a JSON `null`
+  response body are **not** wrapped —
   they propagate as the raw `TypeError` thrown by the runtime's `fetch`
   implementation. A robust caller must catch both shapes.
 
@@ -427,8 +432,10 @@ defaults. Treat the defaults as the baseline; only relax them with intent.
 - **Per-attempt timeouts** (v3.0.4+): `request_timeout` is enforced via
   `AbortController` on each HTTP attempt, so stalled response bodies no longer
   hang the promise past the configured bound. Each redirect hop, fallback URI
-  and protocol retry gets a fresh budget, so a single `lookup()` can take
-  roughly timeout × (redirects + 1) × URIs × protocols in the worst case.
+  and protocol retry gets a fresh budget, so the HTTP phase of a single
+  `lookup()` can take roughly timeout × (redirects + 1) × URIs × protocols.
+  The DNS-resolution check runs before each attempt and is **not** bounded by
+  `request_timeout`, so a slow resolver adds to that.
 - **Not covered by the library:** no response-size cap (the body is read in
   full), and the `Content-Type` is only logged, not enforced — any body that
   parses as JSON is accepted. Add those limits yourself if you need them.
