@@ -262,7 +262,7 @@ sc.socket.emit('message', {
   actor: { id: actorId, type: 'person' }
 });
 
-// 3. Join channel (required before sending to it)
+// 3. Join channel (required before a PRIVMSG; /notice skips the check but +n channels drop it)
 sc.socket.emit('message', {
   '@context': sc.contextFor('irc'),
   type: 'join',

@@ -216,9 +216,9 @@
         },
         {
           "name": "joins_first",
-          "description": "Joins the channel before sending, since IRC send to a channel requires a prior join",
+          "description": "Joins the channel before sending, and does not claim the platform rejects an un-joined NOTICE (only PRIVMSG is gated; +n channels drop outside notices server-side)",
           "type": "custom",
-          "check": "A join for #dev appears before the send emit"
+          "check": "A join for #dev appears before the send emit, and the answer does not state that Sockethub returns the 'not first joined' error for a /notice"
         },
         {
           "name": "uses_context_for",

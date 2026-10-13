@@ -130,9 +130,11 @@ sc.socket.emit('credentials', {
 | `disconnect` | Disconnect from IRC server | No |
 
 There is no `announce` verb with a handler: send a NOTICE via `send` with
-content prefixed `/notice `. Sending to a channel requires a prior `join`;
-otherwise the ack returns
-`cannot send message to a channel of which you've not first joined.`
+content prefixed `/notice `. A regular message (PRIVMSG) to a channel requires
+a prior `join`; otherwise the ack returns
+`cannot send message to a channel of which you've not first joined.` A
+`/notice` is sent raw without that check, but join anyway: `+n` channels drop
+notices from non-members at the IRC server.
 
 ### IRC-Specific Behavior
 
