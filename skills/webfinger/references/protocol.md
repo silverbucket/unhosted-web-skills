@@ -36,6 +36,8 @@ Host: example.com
 Accept: application/jrd+json
 ```
 
+(webfinger.js sends `Accept: application/jrd+json, application/json`.)
+
 ### Query parameters
 
 | Name       | Cardinality          | Required | Behavior                                                                                       |
@@ -126,7 +128,7 @@ A server MAY return a JRD with an empty `links` array or omit `links` entirely
 when there are no links to return. An empty `subject`-only JRD is a valid
 response to a successful lookup with no advertised services.
 
-> **webfinger.js@3.0.4 caveat**: The library requires the parsed JRD to have a
+> **webfinger.js@3.1.0 caveat**: The library requires the parsed JRD to have a
 > `links` property of type `object` and rejects with `WebFingerError: unknown
 > response from server` otherwise. An RFC-valid subject-only JRD (no `links`
 > field at all) will therefore fail. Servers targeted by webfinger.js clients
@@ -214,7 +216,7 @@ The protocol used is `https://` for public hosts and `http://` for `localhost`
 `tls_only: false`, every URL above is retried over HTTP after the HTTPS attempt
 fails.
 
-> **webfinger.js@3.0.4 caveat**: all three fallback paths are parsed as JRD
+> **webfinger.js@3.1.0 caveat**: all three fallback paths are parsed as JRD
 > (JSON) — there is no XML parser in the library. A deployment serving classic
 > `application/xrd+xml` host-meta will reject with `WebFingerError: invalid
 > json` regardless of `uri_fallback`. The fallback is therefore only effective
@@ -257,8 +259,8 @@ const issuer = result.object.links.find(
 
 ## remoteStorage link properties
 
-remoteStorage (draft-dejong-remotestorage-26 §10) advertises exactly one
-WebFinger link of the following shape:
+remoteStorage (draft-dejong-remotestorage-27 §10) says exactly one WebFinger
+link of the following shape SHOULD be added to the record:
 
 ```json
 {
@@ -274,8 +276,8 @@ WebFinger link of the following shape:
 
 | Property URI                                              | Meaning                                                                                  | Required          |
 |-----------------------------------------------------------|------------------------------------------------------------------------------------------|-------------------|
-| `http://remotestorage.io/spec/version`                    | Spec version, e.g. `"draft-dejong-remotestorage-26"`.                                    | Required          |
-| `http://tools.ietf.org/html/rfc6749#section-4.2`          | OAuth 2.0 implicit-grant authorization endpoint URL, or `null` for Kerberos-only.        | Required          |
+| `http://remotestorage.io/spec/version`                    | Spec version, e.g. `"draft-dejong-remotestorage-27"`.                                    | Expected (part of the SHOULD-level link template; no explicit MUST) |
+| `http://tools.ietf.org/html/rfc6749#section-4.2`          | OAuth 2.0 implicit-grant authorization endpoint URL, or `null` for Kerberos-only.        | SHOULD (null or URL) |
 | `http://tools.ietf.org/html/rfc6750#section-2.3`          | `"true"` if bearer token via query parameter is supported, otherwise `null`.             | Optional          |
 | `http://tools.ietf.org/html/rfc7233`                      | `"GET"` if Range GET requests are supported, otherwise `null`.                           | Optional          |
 | `http://remotestorage.io/spec/web-authoring`              | Web-authoring FQDN, otherwise `null`.                                                    | Optional          |
@@ -283,7 +285,7 @@ WebFinger link of the following shape:
 | `http://tools.ietf.org/html/rfc6749#section-3.2`          | OAuth 2.0 token endpoint URL (PKCE, §10.1).                                              | Optional (PKCE)   |
 | `http://tools.ietf.org/html/rfc7636`                      | Supported `code_challenge` methods. Servers MUST support `S256`.                          | Optional (PKCE)   |
 
-Verbatim example (draft-dejong-remotestorage-26 §12.1):
+Verbatim example (draft-dejong-remotestorage-27 §12.1):
 
 ```http
 GET /.well-known/webfinger?resource=acct:michiel@michielbdejong.com HTTP/1.1
@@ -306,7 +308,7 @@ Content-Type: application/jrd+json
     "href": "https://3pp.io:4439/storage/michiel",
     "rel": "http://tools.ietf.org/id/draft-dejong-remotestorage",
     "properties": {
-      "http://remotestorage.io/spec/version": "draft-dejong-remotestorage-26",
+      "http://remotestorage.io/spec/version": "draft-dejong-remotestorage-27",
       "http://tools.ietf.org/html/rfc6749#section-4.2": "https://3pp.io:4439/oauth/michiel",
       "http://tools.ietf.org/html/rfc6750#section-2.3": null,
       "http://tools.ietf.org/html/rfc7233": null,
@@ -415,7 +417,7 @@ can target internal IPs (`127.0.0.1`, `10.0.0.0/8`, `169.254.169.254` AWS IMDS,
 etc.) by supplying an `acct:` URI whose host points at — or whose DNS resolves
 to — such an address.
 
-`webfinger.js` (and any production WebFinger client) MUST mitigate by:
+A production WebFinger client should mitigate by:
 
 - Resolving the hostname and rejecting any address in the loopback,
   link-local, private, broadcast, multicast, or IPv6 ULA ranges.
@@ -426,8 +428,15 @@ to — such an address.
 - Rejecting non-`application/jrd+json` (or non-JSON) responses rather than
   parsing arbitrary bytes.
 
-`webfinger.js`'s defaults implement all of the above and follow the ActivityPub
-"network access" guidance (block private/internal addresses, HTTPS only).
+`webfinger.js` (3.1.0) implements the private-address blocklist (including
+IPv4-mapped, IPv4-compatible and NAT64-embedded IPv6 forms), the
+DNS-resolution check (Node.js / Bun, via both DNS records and
+`dns.lookup`/getaddrinfo so `/etc/hosts` aliases are caught), per-hop
+re-validation of redirect targets, the 3-redirect cap, and a per-attempt
+timeout. It does **not** reject HTTPS→HTTP redirects (even with `tls_only`),
+does not cap response size (the body is read in full), and only logs an
+unexpected `Content-Type` — any JSON body is accepted. Those remain the
+caller's job.
 
 ### Response size limits
 
