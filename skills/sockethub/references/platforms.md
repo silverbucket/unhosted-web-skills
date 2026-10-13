@@ -110,7 +110,7 @@ sc.socket.emit('credentials', {
 | `secure` | boolean | No | Use TLS (default: `true`) |
 | `sasl` | boolean | No | Enable SASL authentication (auto-enabled when `token` or `password` is set) |
 | `saslMechanism` | string | No | `'PLAIN'` (default) or `'OAUTHBEARER'` |
-| `allowInvalidCert` | boolean | No | Accept invalid/self-signed TLS certificates |
+| `allowInvalidCert` | boolean | No | Default `false`. Sets `rejectUnauthorized: false`, i.e. **disables TLS certificate verification entirely** (enables MITM). Only for trusted self-signed networks; never in production |
 
 **Validation rules:**
 - `password` and `token` cannot both be present

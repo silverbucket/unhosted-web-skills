@@ -205,8 +205,8 @@
         {
           "name": "uses_send_action",
           "description": "Uses type: 'send' for the notice",
-          "type": "contains",
-          "value": "'send'"
+          "type": "custom",
+          "check": "The emitted notice message has type 'send' (any quote style)"
         },
         {
           "name": "no_announce_action",

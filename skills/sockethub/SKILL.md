@@ -130,7 +130,7 @@ import SockethubClient from '@sockethub/client';
 // Primary entry point: discovers the Socket.IO endpoint from the base URL
 const sc = await SockethubClient.connect('http://localhost:10550', { initTimeoutMs: 5000 });
 // Fallback (older servers, proxies, shared Manager): bring your own socket
-// const sc = new SockethubClient(io('http://localhost:10550', { path: '/sockethub' }));
+// import { io } from 'socket.io-client'; const sc = new SockethubClient(io('http://localhost:10550', { path: '/sockethub' }));
 
 // Listen for readiness and errors
 sc.socket.on('ready', (info) => console.log('ready:', info.reason, info.platforms));
@@ -443,7 +443,8 @@ sc.contextFor('irc')          // Build canonical @context array for a platform
 sc.clearCredentials()         // Remove stored credentials (no replay on reconnect)
 sc.validateActivity(msg)      // Validate locally; '' when valid, else error string
 sc.getRegisteredPlatforms()   // Platform registry entries from the server
-sc.getPlatformSchema('irc')   // JSON schema for 'messages' (or 'credentials')
+sc.getPlatformSchema('irc')                // 'messages' JSON schema (default)
+sc.getPlatformSchema('irc', 'credentials') // 'credentials' JSON schema
 sc.isReady() / sc.getInitState()
 sc.endpointUrl('httpActions') // Absolute URL of an advertised endpoint, or undefined
 
