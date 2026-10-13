@@ -50,12 +50,7 @@ import Widget from 'remotestorage-widget';
 // 1. Create instance
 const rs = new RemoteStorage({
   logging: false,
-  changeEvents: {
-    local:    true,
-    window:   true,
-    remote:   true,
-    conflict: true
-  }
+  changeEvents: { local: true, window: true, remote: true, conflict: true }
 });
 
 // 2. Claim access to a category (creates /myfavoritedrinks/ namespace)
@@ -72,7 +67,15 @@ widget.attach();  // or widget.attach('my-element-id')
 // 5. Get a client scoped to your namespace
 const client = rs.scope('/myfavoritedrinks/');
 
-// 6. Store and retrieve data
+// 6. Declare a type — storeObject() requires one (throws SchemaNotFound
+//    otherwise; for schemaless JSON use storeFile('application/json', ...))
+client.declareType('drink', {
+  type: 'object',
+  properties: { name: { type: 'string' }, caffeine: { type: 'boolean' } },
+  required: ['name']
+});
+
+// 7. Store and retrieve data
 await client.storeObject('drink', 'coffee', {
   name: 'Coffee',
   caffeine: true
@@ -198,7 +201,7 @@ const Bookmarks = {
 
         // List all bookmarks
         async list() {
-          const all = await privateClient.getAll('/');
+          const all = await privateClient.getAll(''); // not '/' — paths are relative
           return Object.values(all || {});
         },
 
@@ -212,7 +215,9 @@ const Bookmarks = {
           await privateClient.remove(id);
         },
 
-        // Share a bookmark publicly (returns a URL anyone can access)
+        // Share publicly; resolves with a URL (undefined if not connected;
+        // on Dropbox it's a preview page; on Google Drive it REJECTS with
+        // "not implemented" — see Third-Party Backends)
         async share(id) {
           const bookmark = await privateClient.getObject(id);
           if (!bookmark) throw new Error(`Bookmark ${id} not found`);
@@ -285,9 +290,9 @@ rs.on('connected', () => {
 ```
 
 **Dropbox**: Register a scoped app at Dropbox App Console with `account_info.read`,
-`files.metadata.*`, `files.content.*` permissions.
-**Google Drive**: Enable Drive API in Google Cloud Console, create OAuth 2.0
-browser credentials.
+`files.metadata.read/write`, `files.content.read/write`, `sharing.read/write`.
+All seven are required — Dropbox rejects auth with `invalid_scope` otherwise.
+**Google Drive**: Enable Drive API in Google Cloud Console, create OAuth 2.0 browser credentials.
 
 ## Data Modules
 
@@ -322,8 +327,13 @@ client.declareType('contact', {
 // Validates against schema — rejects on failure
 await client.storeObject('contact', 'alice', { name: 'Alice', email: 'alice@example.com' });
 
-// Manual validation
-const result = client.validate({ name: 123 }); // result.valid === false
+// Manual validation — looks up the schema via `@context` (storeObject sets it
+// automatically as http://remotestorage.io/spec/modules/<module>/<alias>);
+// throws SchemaNotFound if it is missing or unregistered
+const result = client.validate({
+  '@context': 'http://remotestorage.io/spec/modules/contacts/contact',
+  name: 123
+}); // result.valid === false
 ```
 
 ## Caching Strategies
@@ -334,7 +344,7 @@ strategies — choose based on your app's needs:
 | Strategy | Behavior | Best for |
 |----------|----------|----------|
 | **ALL** | Proactively fetches and caches everything in a path. Checks ETags on sync. | Main app data you need offline |
-| **SEEN** | Caches only items the app has read or written. Default behavior. | Large datasets where you only need a subset |
+| **SEEN** | Caches only items read or written at least once since connecting to the current remote, plus their ancestor folders. Default. | Large datasets where you only need a subset |
 | **FLUSH** | Caches outgoing writes only; clears after successful remote sync. | Write-heavy paths (logs, analytics) |
 
 ```javascript
@@ -347,7 +357,8 @@ rs.caching.checkPath('/tasks/');        // 'ALL'
 ```
 
 **Caching strategies are not persisted** — they reset on page reload. Always set
-them during app initialization, before the first sync runs.
+them during app initialization, before the first sync runs. `caching.set()` (and
+`enable`/`disable`) throw if you haven't claimed access to the path first.
 
 ## Event System
 
@@ -359,7 +370,8 @@ them during app initialization, before the first sync runs.
 | `disconnected` | User disconnected |
 | `not-connected` | Running in anonymous/local mode |
 | `ready` | All features loaded |
-| `sync-started` / `sync-done` | Sync cycle begins / completes |
+| `sync-started` / `sync-done` | Sync cycle begins / completes. `sync-done` receives `{ completed }`; `false` means some requests failed and will be retried next cycle |
+| `scope-change-required` | Claimed scopes differ from the last authorized ones. Receives `{ authorizedScope, requestedScope, reauthorize }` — call `reauthorize()` to re-run OAuth |
 | `network-offline` / `network-online` | Network status changes |
 | `error` | See Error Handling below |
 
@@ -375,7 +387,9 @@ carries `relativePath`, `newValue`, `oldValue`, and `origin`:
 | `window` | Current browser context writes data |
 | `conflict` | Local and remote versions diverge (remote wins by default) |
 
-Enable only the origins you need via `changeEvents` in the constructor.
+Enable only the origins you need via `changeEvents` in the constructor. Defaults:
+`local: true, window: false, remote: true, conflict: true`. The option replaces the
+whole object, so set all four keys — any you omit become disabled.
 
 **Recommended loading pattern** — use `getAll()` for initial render, then
 `change` events for incremental updates:
@@ -393,31 +407,26 @@ client.on('change', (event) => {
 });
 ```
 
-**Handling bulk incoming changes:**
-
-During a sync cycle, `change` fires once per incoming item. The recommended
-approach is to handle each event individually (add/update/remove one item in
-your UI state) as shown above.
-
-Avoid calling `getAll()` inside a `change` handler — it rereads the entire
-cache on every item. If your app must reload full collections, use `change`
-only as a flag and defer the reload to `sync-done`:
+**Handling bulk incoming changes:** during a sync cycle, `change` fires once per
+incoming item; handle each individually as shown above. Avoid calling `getAll()`
+inside a `change` handler — it rereads the entire cache on every item. If your
+app must reload full collections, use `change` only as a flag and defer the
+reload to `sync-done`:
 
 ```javascript
 let hasChanges = false;
 client.on('change', () => { hasChanges = true; });
 
-remoteStorage.on('sync-done', () => {
-  if (hasChanges) {
+rs.on('sync-done', ({ completed }) => {
+  if (completed && hasChanges) { // completed:false → failed requests will retry
     hasChanges = false;
     reloadFromCache(); // single getAll() per cycle
   }
 });
 ```
 
-Note: `sync-done` fires every sync cycle (default: every 10s foreground, 60s
-background), even when nothing changed. Always gate reloads on actual change
-events.
+`sync-done` fires every cycle (default 10s foreground, 60s background) even when
+nothing changed — always gate reloads on actual change events.
 
 ## API Reference
 
@@ -431,11 +440,17 @@ options, sync controls, read/write calls, and utilities, are in
 rs.setApiKeys({ dropbox: 'APP_KEY', googledrive: 'CLIENT_ID' });
 ```
 
-**Dropbox**: Register a scoped app. Needs `account_info.read`, `files.metadata.*`,
-`files.content.*`. Limitations: 150 MB max file, no `getItemURL()`, case-insensitive paths.
+**Dropbox**: Register a scoped app with all seven scopes listed under Example 3
+(including `sharing.read`/`sharing.write`, or auth fails with `invalid_scope`).
+Auth is OAuth 2 **PKCE** (authorization code + refresh token), so no "implicit
+grant" setting is needed and sessions survive token expiry. Limitations: 150 MB
+max file, case-insensitive paths. `getItemURL()` works for `/public/` files but
+returns a shared-link *preview page*; replace `dl=0` with `raw=1` for the raw file.
 
-**Google Drive**: Enable Drive API, create OAuth 2.0 browser credentials.
-Limitations: no `getItemURL()`, requires Google verification for production.
+**Google Drive**: Enable Drive API, create OAuth 2.0 browser credentials. Auth is
+the **implicit** flow (short-lived token, no refresh) — expect `Unauthorized` →
+`reconnect()` after about an hour. Unverified apps show a Google security warning
+on connect. Limitations: no public sharing (#1051), no `getItemURL()` (#1054).
 
 ## Error Handling
 
@@ -469,18 +484,17 @@ try {
 
 ## Node.js Usage
 
-Works in Node 18+ with two key differences: no IndexedDB/localStorage (uses
-**in-memory storage** — data lost on exit; use Deno for persistence), and no
-browser OAuth (pass a pre-acquired token to `rs.connect(address, token)`).
+Needs native `fetch` (Node 18+; CI tests 22/24/26). No IndexedDB/localStorage, so
+**in-memory storage** (lost on exit; Deno has localStorage); no browser OAuth, so
+pass a pre-acquired token to `rs.connect(address, token)`. Set
+`discovery: { allowPrivateAddresses: false }` to re-enable WebFinger's SSRF guard.
 
 ## Requirements
 
-- Browser (any modern browser with IndexedDB) or Node.js 18+
-- npm package: `remotestoragejs`
-- Optional: `remotestorage-widget` for the connect UI
+- Browser (any modern browser with IndexedDB) or Node.js with native `fetch` (18+)
+- npm: `remotestoragejs`; optional `remotestorage-widget` for the connect UI
 
 ## Related Packages
 
-- `remotestoragejs` — Core library (this skill)
-- `remotestorage-widget` — Drop-in connect/sync UI widget
+- `remotestoragejs` — Core library (this skill); `remotestorage-widget` — connect/sync UI
 - `rs.js` community modules — Shared data modules (contacts, bookmarks, etc.)

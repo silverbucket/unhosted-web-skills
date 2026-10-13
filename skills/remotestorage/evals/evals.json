@@ -1,0 +1,119 @@
+{
+  "skill_name": "remotestorage",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Build a reusable remoteStorage.js data module for bookmarks with add/list/get/remove and a share(id) method that publishes a bookmark publicly and returns its public URL. Then show how an app registers and uses it. Plain JavaScript, ES modules.",
+      "expected_output": "See assertions (bookmarks-module-public-share)",
+      "files": [],
+      "assertions": [
+        {
+          "name": "a1",
+          "description": "Declares a JSON Schema type with declareType before any storeObject call (storeObject throws SchemaNotFound without one)",
+          "type": "custom",
+          "check": "Declares a JSON Schema type with declareType before any storeObject call (storeObject throws SchemaNotFound without one)"
+        },
+        {
+          "name": "a2",
+          "description": "list() reads the module root with getAll() or getAll('') — NOT getAll('/'), which returns an empty object on a module client",
+          "type": "custom",
+          "check": "list() reads the module root with getAll() or getAll('') — NOT getAll('/'), which returns an empty object on a module client"
+        },
+        {
+          "name": "a3",
+          "description": "share() writes via publicClient and awaits getItemURL (treated as a Promise), not as a synchronous string return",
+          "type": "custom",
+          "check": "share() writes via publicClient and awaits getItemURL (treated as a Promise), not as a synchronous string return"
+        },
+        {
+          "name": "a4",
+          "description": "Module uses the { name, builder(privateClient, publicClient) } shape returning { exports } and is registered with rs.addModule plus rs.access.claim",
+          "type": "custom",
+          "check": "Module uses the { name, builder(privateClient, publicClient) } shape returning { exports } and is registered with rs.addModule plus rs.access.claim"
+        },
+        {
+          "name": "a5",
+          "description": "Mentions that getItemURL resolves undefined when not connected and/or does not work on Google Drive",
+          "type": "custom",
+          "check": "Mentions that getItemURL resolves undefined when not connected and/or does not work on Google Drive"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I'm building a todo PWA with remotestoragejs. Write the data layer: setup, a 'todo' type, CRUD, and keep a UI list in sync when changes arrive from other devices, without rerendering the whole list on every item. I only care about remote and conflict changes.",
+      "expected_output": "See assertions (todo-sync-ui)",
+      "files": [],
+      "assertions": [
+        {
+          "name": "a1",
+          "description": "changeEvents in the constructor sets all four keys explicitly (local, window, remote, conflict), or the answer warns that a partial object disables the omitted origins",
+          "type": "custom",
+          "check": "changeEvents in the constructor sets all four keys explicitly (local, window, remote, conflict), or the answer warns that a partial object disables the omitted origins"
+        },
+        {
+          "name": "a2",
+          "description": "Declares the 'todo' type with declareType before storeObject",
+          "type": "custom",
+          "check": "Declares the 'todo' type with declareType before storeObject"
+        },
+        {
+          "name": "a3",
+          "description": "change handler applies each event incrementally (upsert/remove by relativePath) rather than calling getAll() inside the handler",
+          "type": "custom",
+          "check": "change handler applies each event incrementally (upsert/remove by relativePath) rather than calling getAll() inside the handler"
+        },
+        {
+          "name": "a4",
+          "description": "If sync-done is used, its handler reads the { completed } payload and the instance identifier used (e.g. rs) is actually defined in the code",
+          "type": "custom",
+          "check": "If sync-done is used, its handler reads the { completed } payload and the instance identifier used (e.g. rs) is actually defined in the code"
+        },
+        {
+          "name": "a5",
+          "description": "Enables caching for the claimed path and does not call startSync() after writes",
+          "type": "custom",
+          "check": "Enables caching for the claimed path and does not call startSync() after writes"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "My remoteStorage app should also let users connect Dropbox and Google Drive. Show me the setup code and tell me exactly what I need to configure in the Dropbox App Console and Google Cloud Console, and what doesn't work on those backends.",
+      "expected_output": "See assertions (dropbox-backend-setup)",
+      "files": [],
+      "assertions": [
+        {
+          "name": "a1",
+          "description": "Dropbox scope list includes sharing.read and sharing.write (and notes Dropbox rejects auth with invalid_scope without them)",
+          "type": "custom",
+          "check": "Dropbox scope list includes sharing.read and sharing.write (and notes Dropbox rejects auth with invalid_scope without them)"
+        },
+        {
+          "name": "a2",
+          "description": "Does NOT claim getItemURL is unsupported on Dropbox; states Dropbox getItemURL returns a shared-link preview URL (dl=0 → raw=1 for raw content)",
+          "type": "custom",
+          "check": "Does NOT claim getItemURL is unsupported on Dropbox; states Dropbox getItemURL returns a shared-link preview URL (dl=0 → raw=1 for raw content)"
+        },
+        {
+          "name": "a3",
+          "description": "States Google Drive does not support getItemURL / public sharing",
+          "type": "custom",
+          "check": "States Google Drive does not support getItemURL / public sharing"
+        },
+        {
+          "name": "a4",
+          "description": "Describes Google verification as avoiding a security warning rather than as a hard requirement for production",
+          "type": "custom",
+          "check": "Describes Google verification as avoiding a security warning rather than as a hard requirement for production"
+        },
+        {
+          "name": "a5",
+          "description": "Uses rs.setApiKeys({ dropbox, googledrive }) and mentions the 150 MB Dropbox file limit and case-insensitive paths",
+          "type": "custom",
+          "check": "Uses rs.setApiKeys({ dropbox, googledrive }) and mentions the 150 MB Dropbox file limit and case-insensitive paths"
+        }
+      ]
+    }
+  ]
+}
